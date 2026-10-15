@@ -2,3 +2,5 @@
 .env
 /vendor/
 *.log
+composer.phar
+/.composer/
