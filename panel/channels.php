@@ -86,6 +86,7 @@ echo '<style>.cat{border:1px solid var(--line);border-radius:8px;margin-bottom:1
 echo '<form method="post">' . csrf_field();
 
 foreach ($cats as $cid => $cat) {
+    $cid = (string) $cid; // numerische Schluessel sind in PHP Integer -> fuer h() zurueck in String
     $catEx = isset($excluded[$cid]);
     echo '<div class="cat"><label class="head"><input type="checkbox" class="catbox" name="cat[]" value="' . h($cid) . '"'
         . ($catEx ? ' checked' : '') . '> ' . h(mb_strtoupper($cat['name'])) . '</label>';

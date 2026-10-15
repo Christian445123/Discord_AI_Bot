@@ -2,6 +2,12 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
+
+// Fehler nicht anzeigen, aber protokollieren - bei leeren Seiten hier nachsehen: panel-error.log
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+ini_set('error_log', $root . '/panel-error.log');
+
 if (!is_file($root . '/vendor/autoload.php') || !is_file($root . '/.env')) {
     http_response_code(500);
     exit('Bot ist noch nicht eingerichtet. Bitte zuerst "php install.php" ausfuehren.');
