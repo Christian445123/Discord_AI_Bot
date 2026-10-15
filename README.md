@@ -27,7 +27,9 @@ und startet den Bot auf Wunsch. Danach genügt `php bot.php`.
 Ordner `panel/`. `install.php` legt Benutzer und Passwort an und startet das Panel auf Wunsch.
 Manuell: `php -S 0.0.0.0:8080 -t panel` (oder `panel/` als Webroot eines Apache/nginx-vHosts verwenden).
 
-- **Dashboard**: Statistiken, zuletzt gelernte und meistgenutzte Antworten, letzte Eingriffe
+Einstieg ist `index.php` (nur die Anmeldung); alles Weitere liegt hinter dem Login. Die `index.php` im Projektroot leitet auf `panel/index.php` weiter, die `.htaccess` sperrt `.env`, `src/` und `vendor/` (Apache). Besser: nur `panel/` als Webroot verwenden.
+
+- **Dashboard** (`dashboard.php`): Statistiken, zuletzt gelernte und meistgenutzte Antworten, letzte Eingriffe
 - **Wissen**: Antworten suchen, hinzufügen, bearbeiten, löschen, bewerten
 - **Eingriffe**: Protokoll der Channel-Überwachung
 - **Einstellungen**: Bot-Parameter und Panel-Passwort (schreibt in die `.env`; Bot danach neu starten)

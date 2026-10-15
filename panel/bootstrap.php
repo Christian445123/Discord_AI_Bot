@@ -104,7 +104,7 @@ function env_update(array $values): void
 function page_header(string $title, string $active = ''): void
 {
     $nav = [
-        'index.php' => 'Dashboard',
+        'dashboard.php' => 'Dashboard',
         'knowledge.php' => 'Wissen',
         'interventions.php' => 'Eingriffe',
         'settings.php' => 'Einstellungen',

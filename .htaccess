@@ -1,0 +1,9 @@
+# Schuetzt .env, Quellcode und Abhaengigkeiten, falls der Projektordner als Webroot dient (Apache).
+<FilesMatch "^(\.env.*|composer\.(json|lock|phar)|install\.php|bot\.php|README\.md)$">
+    Require all denied
+</FilesMatch>
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(src|vendor|\.git)(/|$) - [F,L]
+</IfModule>
+Options -Indexes
