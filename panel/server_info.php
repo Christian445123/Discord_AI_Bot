@@ -16,19 +16,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->prepare('DELETE FROM server_info WHERE id = ?')->execute([(int) ($_POST['id'] ?? 0)]);
         flash('Eintrag gelöscht.');
     } elseif ($action === 'crawl') {
-        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
-        if (!function_exists('exec') || in_array('exec', $disabled, true)) {
-            flash('Der Start aus dem Panel ist auf diesem Server nicht möglich. Bitte "php crawl.php" in der Konsole ausführen.');
+        // Das Panel startet nichts selbst, sondern legt einen Auftrag an; der dauerhaft laufende Bot (pm2) fuehrt ihn aus.
+        $open = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'crawl' AND status IN ('pending','running')")->fetchColumn();
+        if ($open > 0) {
+            flash('Es läuft bzw. wartet bereits eine Durchsuchung.');
         } else {
-            $php = escapeshellarg(PHP_BINARY);
-            $script = escapeshellarg($root . '/crawl.php');
-            $log = escapeshellarg($root . '/crawl.log');
-            if (stripos(PHP_OS_FAMILY, 'Windows') === 0) {
-                pclose(popen('start /B "" ' . $php . ' ' . $script . ' > ' . $log . ' 2>&1', 'r'));
-            } else {
-                exec('nohup ' . $php . ' ' . $script . ' > ' . $log . ' 2>&1 &');
-            }
-            flash('Durchsuchung gestartet. Fortschritt unten in "Letzte Ausgabe" bzw. in crawl.log.');
+            $pdo->prepare("INSERT INTO jobs (type, status, created_at) VALUES ('crawl', 'pending', NOW())")->execute();
+            flash('Durchsuchung angefordert. Der Bot startet sie innerhalb weniger Sekunden.');
         }
     }
     header('Location: server_info.php');
@@ -61,7 +55,19 @@ echo '<h1>Server-Infos</h1>';
 echo '<div class="card"><h2>Server durchsuchen</h2>'
     . '<p class="mute">Liest die Verläufe der Channels und speichert Frage/Antwort-Paare und Team-Infos. '
     . 'Channels, die nur für das Team sichtbar sind, werden nicht gelesen.</p>'
-    . '<form method="post">' . csrf_field() . '<input type="hidden" name="action" value="crawl"><button>Durchsuchung starten</button></form></div>';
+    . '<form method="post">' . csrf_field() . '<input type="hidden" name="action" value="crawl"><button>Durchsuchung starten</button></form>';
+
+$hb = $pdo->query("SELECT updated_at FROM bot_status WHERE k = 'heartbeat'")->fetchColumn();
+$online = $hb && (time() - strtotime((string) $hb)) < 30;
+echo '<p class="mute" style="margin-top:12px">Bot: ' . ($online ? '<b style="color:var(--ok)">online</b>' : '<b style="color:var(--bad)">offline</b> - Aufträge werden erst ausgeführt, wenn der Bot läuft (pm2)') . '</p>';
+
+$job = $pdo->query("SELECT * FROM jobs WHERE type = 'crawl' ORDER BY id DESC LIMIT 1")->fetch();
+if ($job) {
+    $label = ['pending' => 'wartet auf den Bot', 'running' => 'läuft', 'done' => 'abgeschlossen', 'failed' => 'fehlgeschlagen'][$job['status']] ?? $job['status'];
+    echo '<p class="mute">Letzte Durchsuchung #' . (int) $job['id'] . ': <b>' . h($label) . '</b> · angefordert ' . h($job['created_at'])
+        . ($job['finished_at'] ? ' · beendet ' . h($job['finished_at']) : '') . ($job['note'] ? ' · ' . h($job['note']) : '') . '</p>';
+}
+echo '</div>';
 
 $logFile = $root . '/crawl.log';
 if (is_file($logFile)) {

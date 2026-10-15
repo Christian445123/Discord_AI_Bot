@@ -64,6 +64,22 @@ final class Database
             updated_at DATETIME NOT NULL
         ) CHARACTER SET utf8mb4');
 
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS jobs (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            type VARCHAR(32) NOT NULL,
+            status VARCHAR(16) NOT NULL DEFAULT \'pending\',
+            note VARCHAR(255) NOT NULL DEFAULT \'\',
+            created_at DATETIME NOT NULL,
+            started_at DATETIME NULL,
+            finished_at DATETIME NULL
+        ) CHARACTER SET utf8mb4');
+
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS bot_status (
+            k VARCHAR(32) PRIMARY KEY,
+            v VARCHAR(255) NOT NULL,
+            updated_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS interventions (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             channel_id VARCHAR(32) NOT NULL,

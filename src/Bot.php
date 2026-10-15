@@ -49,6 +49,7 @@ final class Bot
         $this->discord->on('init', function (Discord $discord) {
             echo "[Bot] Eingeloggt als {$discord->user->username}\n";
             $discord->on(Event::MESSAGE_CREATE, fn(Message $m) => $this->onMessage($m));
+            (new Jobs($this->db, $discord->getLoop()))->start();
         });
         $this->discord->run();
     }

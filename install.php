@@ -472,9 +472,20 @@ say('  Wichtig: Im Discord Developer Portal (Bot -> Privileged Gateway Intents)'
 say('  "Message Content Intent" und "Server Members Intent" aktivieren.');
 say();
 
+$pm2 = false;
+if (fnAvailable('exec')) {
+    $o2 = [];
+    $c2 = 1;
+    exec(isWindows() ? 'pm2 -v 2>NUL' : 'pm2 -v 2>/dev/null', $o2, $c2);
+    $pm2 = $c2 === 0;
+}
+dbg('pm2 verfuegbar: ' . ($pm2 ? 'ja' : 'nein'));
+
 $panelPort = (int) $cfg['PANEL_PORT'];
 $panelCmd = escapeshellarg(PHP_BINARY) . ' -S 0.0.0.0:' . $panelPort . ' -t ' . escapeshellarg(__DIR__ . '/panel');
-if (askYesNo("Web-Panel jetzt im Hintergrund starten (http://localhost:{$panelPort})?", true)) {
+if ($pm2) {
+    say("  pm2 gefunden - Bot und Web-Panel (Port {$panelPort}) werden am Ende dauerhaft ueber pm2 gestartet.");
+} elseif (askYesNo("Web-Panel jetzt im Hintergrund starten (http://localhost:{$panelPort})?", true)) {
     if (isWindows()) {
         pclose(popen('start /B "" ' . $panelCmd . ' > NUL 2>&1', 'r'));
     } else {
@@ -503,7 +514,27 @@ if ($cfg['TEAM_ROLE_IDS'] !== '') {
     warn('TEAM_ROLE_IDS ist leer - Server-Durchsuchung uebersprungen (ohne Team-Rollen kann nicht sicher gefiltert werden).');
 }
 
-if (askYesNo('Bot jetzt starten?', true)) {
+if ($pm2) {
+    if (askYesNo('Bot und Panel jetzt dauerhaft mit pm2 starten?', true)) {
+        step('Starte Bot und Panel mit pm2 (ecosystem.config.js)');
+        $code = run('pm2 startOrRestart ecosystem.config.js --update-env');
+        if ($code !== 0) {
+            fail("pm2 konnte nicht gestartet werden (Exit-Code $code). Ausgabe siehe oben.");
+        }
+        run('pm2 save');
+        ok('Bot und Panel laufen jetzt dauerhaft ueber pm2');
+        say();
+        say('  Nuetzliche Befehle:');
+        say('    pm2 logs discord-ai-bot     Live-Log des Bots');
+        say('    pm2 status                  Uebersicht');
+        say('    pm2 restart discord-ai-bot  Bot neu starten (z.B. nach Einstellungsaenderung)');
+        say('    pm2 startup                 Autostart nach Server-Neustart einrichten (Befehl ausfuehren, den pm2 ausgibt)');
+        say('  Danach: pm2 save');
+    } else {
+        say('  Start spaeter mit: pm2 start ecosystem.config.js');
+    }
+} elseif (askYesNo('Bot jetzt starten (im Vordergrund)?', true)) {
+    say('  Hinweis: Fuer Dauerbetrieb pm2 installieren (npm i -g pm2) und install.php erneut ausfuehren.');
     step('Starte Bot (php bot.php) - Ausgabe live unten, mit Strg+C beenden');
     $code = run(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/bot.php'));
     say("  Bot beendet (Exit-Code $code).");

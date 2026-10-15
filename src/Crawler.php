@@ -103,52 +103,27 @@ final class Crawler
         if (in_array($channel->id, $this->ignore, true)) {
             return 'manuell ausgeschlossen (CRAWL_IGNORE_CHANNEL_IDS)';
         }
+        if (isset($this->excludedChannels[$channel->id])) {
+            return 'im Panel ausgeschlossen';
+        }
+        if ($channel->parent_id && isset($this->excludedCategories[$channel->parent_id])) {
+            return 'Kategorie im Panel ausgeschlossen';
+        }
+        return ChannelPolicy::autoReason($guild, $channel, $this->teamRoles);
+    }
 
-        $everyone = $guild->roles->get('id', $guild->id);
-        $view = $everyone ? (bool) $everyone->permissions->view_channel : true;
-        $history = $everyone ? (bool) $everyone->permissions->read_message_history : true;
-
-        $allowedRoles = [];
-        $allowedMembers = 0;
-        foreach ($channel->overwrites as $ow) {
-            $isRole = (int) $ow->type === 0;
-            if ($isRole && $ow->id === $guild->id) {
-                if ($ow->deny->view_channel) {
-                    $view = false;
-                }
-                if ($ow->allow->view_channel) {
-                    $view = true;
-                }
-                if ($ow->deny->read_message_history) {
-                    $history = false;
-                }
-                if ($ow->allow->read_message_history) {
-                    $history = true;
-                }
-                continue;
-            }
-            if ($ow->allow->view_channel) {
-                if ($isRole) {
-                    $allowedRoles[] = $ow->id;
-                } else {
-                    $allowedMembers++;
-                }
+    /** Laedt die im Panel angeklickten Ausschluesse. */
+    private function loadExclusions(): void
+    {
+        $this->excludedChannels = [];
+        $this->excludedCategories = [];
+        foreach ($this->db->pdo()->query('SELECT target_id, kind FROM crawl_exclusions') as $row) {
+            if ($row['kind'] === 'category') {
+                $this->excludedCategories[$row['target_id']] = true;
+            } else {
+                $this->excludedChannels[$row['target_id']] = true;
             }
         }
-
-        if ($view && $history) {
-            return null; // fuer @everyone sichtbar
-        }
-        if ($view && !$history) {
-            return 'Nachrichtenverlauf fuer @everyone gesperrt';
-        }
-
-        // Fuer @everyone nicht sichtbar: nur lesen, wenn eine Nicht-Team-Rolle (z.B. "Spieler") Zugriff hat.
-        $nonTeam = array_diff($allowedRoles, $this->teamRoles);
-        if ($allowedMembers === 0 && $nonTeam !== []) {
-            return null;
-        }
-        return 'nur fuer Team/einzelne Personen sichtbar';
     }
 
     // ------------------------------------------------------------ Channel verarbeiten

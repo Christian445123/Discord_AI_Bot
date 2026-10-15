@@ -22,6 +22,19 @@ Es prüft PHP, lädt Composer selbst herunter, installiert die Abhängigkeiten, 
 schreibt die `.env` (LIVE-Datei, nicht im Git), prüft Token und Datenbank, legt Datenbank und Tabellen an
 und startet den Bot auf Wunsch. Danach genügt `php bot.php`.
 
+## Dauerbetrieb mit pm2
+
+```bash
+npm i -g pm2
+pm2 start ecosystem.config.js    # startet Bot (bot.php) und Panel
+pm2 save && pm2 startup          # Autostart nach Server-Neustart
+pm2 logs discord-ai-bot          # Live-Log
+```
+
+`install.php` richtet das automatisch ein, wenn pm2 installiert ist. Der Bot startet bei Abstürzen selbst neu.
+Aufträge aus dem Panel (z.B. "Durchsuchung starten") werden vom laufenden Bot ausgeführt – der Bot muss also laufen.
+Nach Änderungen in den Einstellungen: `pm2 restart discord-ai-bot`.
+
 ## Server durchsuchen
 
 ```bash

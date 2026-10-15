@@ -18,8 +18,13 @@ $top = $pdo->query('SELECT id, question, uses FROM knowledge WHERE uses > 0 ORDE
 $recent = $pdo->query('SELECT question, answer, created_at FROM knowledge ORDER BY id DESC LIMIT 5')->fetchAll();
 $events = $pdo->query('SELECT channel_id, user_ids, heat, created_at FROM interventions ORDER BY id DESC LIMIT 5')->fetchAll();
 
+$hb = $pdo->query("SELECT updated_at FROM bot_status WHERE k = 'heartbeat'")->fetchColumn();
+$online = $hb && (time() - strtotime((string) $hb)) < 30;
+
 page_header('Dashboard', 'dashboard.php');
 echo '<h1>Dashboard</h1><div class="grid">';
+echo '<div class="card"><div class="stat" style="color:var(--' . ($online ? 'ok' : 'bad') . ')">' . ($online ? 'Online' : 'Offline')
+    . '</div><div class="mute">Bot-Status</div></div>';
 foreach ($stats as $label => $value) {
     echo '<div class="card"><div class="stat">' . $value . '</div><div class="mute">' . h($label) . '</div></div>';
 }
