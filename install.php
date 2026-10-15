@@ -486,6 +486,23 @@ if (askYesNo("Web-Panel jetzt im Hintergrund starten (http://localhost:{$panelPo
 }
 say();
 
+if ($cfg['TEAM_ROLE_IDS'] !== '') {
+    say('  Der Bot kann den Server durchsuchen und daraus Wissen speichern.');
+    say('  Channels, die nur fuer das Team sichtbar sind, werden NICHT gelesen.');
+    if (askYesNo('Server jetzt durchsuchen (php crawl.php)?', true)) {
+        step('Durchsuche den Discord-Server (kann je nach Verlauf einige Minuten dauern)');
+        $code = run(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/crawl.php'));
+        if ($code !== 0) {
+            warn("Durchsuchung mit Exit-Code $code beendet - Ausgabe siehe oben.");
+        } else {
+            ok('Durchsuchung abgeschlossen');
+        }
+        say();
+    }
+} else {
+    warn('TEAM_ROLE_IDS ist leer - Server-Durchsuchung uebersprungen (ohne Team-Rollen kann nicht sicher gefiltert werden).');
+}
+
 if (askYesNo('Bot jetzt starten?', true)) {
     step('Starte Bot (php bot.php) - Ausgabe live unten, mit Strg+C beenden');
     $code = run(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/bot.php'));

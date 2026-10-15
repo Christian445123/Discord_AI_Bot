@@ -192,6 +192,22 @@ final class Bot
             return;
         }
 
+        // Kein gelerntes Q&A: in den durchsuchten Server-Infos (Regeln, FAQ, Ankuendigungen) nachsehen.
+        $info = $this->knowledge->findInfo($q['text']);
+        if ($info !== null) {
+            $snippet = mb_strimwidth($info['content'], 0, 900, '…');
+            $reply = $sie
+                ? "Hallo {$name}, vielen Dank für Ihre Frage! Dazu habe ich im Channel #{$info['channel']} Folgendes gefunden:\n\n{$snippet}\n\n"
+                  . "Falls das Ihre Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei Ihnen. – {$server}"
+                : "Hallo {$name}, danke für deine Frage! Dazu habe ich im Channel #{$info['channel']} Folgendes gefunden:\n\n{$snippet}\n\n"
+                  . "Falls das deine Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei dir. – {$server}";
+            $m->reply($reply)->then(function (Message $sent) use ($q) {
+                $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => null, 'time' => time()];
+                $this->pruneBotAnswers();
+            });
+            return;
+        }
+
         if (Env::bool('FALLBACK_ENABLED', true)) {
             $reply = $sie
                 ? "Hallo {$name}, vielen Dank für Ihre Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied wird sich so bald wie möglich bei Ihnen melden. Wir bitten um etwas Geduld."

@@ -44,6 +44,26 @@ final class Database
             last_used_at DATETIME NULL
         ) CHARACTER SET utf8mb4');
 
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS server_info (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            message_id VARCHAR(32) NOT NULL UNIQUE,
+            channel_id VARCHAR(32) NOT NULL,
+            channel_name VARCHAR(100) NOT NULL,
+            content TEXT NOT NULL,
+            normalized TEXT NOT NULL,
+            created_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS crawl_channels (
+            channel_id VARCHAR(32) PRIMARY KEY,
+            channel_name VARCHAR(100) NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            reason VARCHAR(255) NOT NULL DEFAULT \'\',
+            newest_message_id VARCHAR(32) NULL,
+            messages_read INT UNSIGNED NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS interventions (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             channel_id VARCHAR(32) NOT NULL,

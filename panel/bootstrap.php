@@ -106,6 +106,7 @@ function page_header(string $title, string $active = ''): void
     $nav = [
         'dashboard.php' => 'Dashboard',
         'knowledge.php' => 'Wissen',
+        'server_info.php' => 'Server-Infos',
         'interventions.php' => 'Eingriffe',
         'settings.php' => 'Einstellungen',
     ];

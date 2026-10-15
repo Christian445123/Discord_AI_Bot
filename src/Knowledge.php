@@ -39,7 +39,47 @@ final class Knowledge
             'INSERT INTO knowledge (question, normalized, answer, answered_by, channel_id, created_at) VALUES (?,?,?,?,?,?)'
         );
         $st->execute([$question, $norm, $answer, $teamUserId, $channelId, date('Y-m-d H:i:s')]);
-        $this->cache = null;
+        // Cache direkt ergaenzen statt neu zu laden (wichtig fuer grosse Server-Durchsuchungen).
+        $this->all();
+        $this->cache[] = ['id' => (int) $this->db->pdo()->lastInsertId(), 'normalized' => $norm, 'answer' => $answer, 'score' => 0];
+    }
+
+    /** Speichert eine Info-Nachricht aus einem oeffentlichen Channel (Regeln, Ankuendigungen, FAQ ...). */
+    public function addInfo(string $messageId, string $channelId, string $channelName, string $content, string $createdAt): void
+    {
+        $st = $this->db->pdo()->prepare(
+            'INSERT IGNORE INTO server_info (message_id, channel_id, channel_name, content, normalized, created_at) VALUES (?,?,?,?,?,?)'
+        );
+        $st->execute([$messageId, $channelId, $channelName, $content, Text::normalize($content), $createdAt]);
+    }
+
+    /**
+     * Sucht in den gespeicherten Server-Infos nach einem Text, der die Frage inhaltlich abdeckt.
+     *
+     * @return array{content:string,channel:string}|null
+     */
+    public function findInfo(string $question, float $minCoverage = 0.75): ?array
+    {
+        $qTokens = Text::tokens(Text::normalize($question));
+        if (count($qTokens) < 2) {
+            return null;
+        }
+        $best = null;
+        $bestScore = 0.0;
+        $rows = $this->db->pdo()->query('SELECT content, channel_name, normalized FROM server_info ORDER BY id DESC LIMIT 5000');
+        foreach ($rows as $row) {
+            $iTokens = Text::tokens($row['normalized']);
+            $hit = count(array_intersect($qTokens, $iTokens));
+            $score = $hit / count($qTokens);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $row;
+            }
+        }
+        if ($best === null || $bestScore < $minCoverage) {
+            return null;
+        }
+        return ['content' => $best['content'], 'channel' => $best['channel_name']];
     }
 
     /** @return array{id:int,answer:string,confidence:float}|null */

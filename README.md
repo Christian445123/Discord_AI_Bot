@@ -22,6 +22,20 @@ Es prüft PHP, lädt Composer selbst herunter, installiert die Abhängigkeiten, 
 schreibt die `.env` (LIVE-Datei, nicht im Git), prüft Token und Datenbank, legt Datenbank und Tabellen an
 und startet den Bot auf Wunsch. Danach genügt `php bot.php`.
 
+## Server durchsuchen
+
+```bash
+php crawl.php
+```
+
+Liest die Nachrichtenverläufe und speichert daraus Frage/Antwort-Paare (Teamler antwortet auf Spielerfrage) sowie
+längere Team-Texte (Regeln, Ankündigungen, FAQ → Tabelle `server_info`). Wiederholte Läufe lesen nur neue Nachrichten.
+
+**Datenschutz:** Channels, die für `@everyone` nicht sichtbar sind und nur für `TEAM_ROLE_IDS` (oder einzelne Personen)
+freigegeben sind, werden nicht gelesen. Ohne gesetzte `TEAM_ROLE_IDS` bricht die Durchsuchung ab. Personen-Erwähnungen werden vor
+dem Speichern entfernt. Weitere Channels über `CRAWL_IGNORE_CHANNEL_IDS` ausschließen. Welche Channels gelesen/übersprungen wurden,
+zeigt das Panel unter "Server-Infos". Benötigt den **Server Members Intent**.
+
 ## Web-Panel
 
 Ordner `panel/`. `install.php` legt Benutzer und Passwort an und startet das Panel auf Wunsch.
