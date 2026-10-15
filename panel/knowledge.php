@@ -16,7 +16,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $question = trim((string) ($_POST['question'] ?? ''));
     $answer = trim((string) ($_POST['answer'] ?? ''));
 
-    if ($action === 'delete' && $id > 0) {
+    if ($action === 'purge_all') {
+        if (trim((string) ($_POST['confirm'] ?? '')) !== 'LÖSCHEN') {
+            flash('Nicht gelöscht: Das Bestätigungswort LÖSCHEN wurde nicht korrekt eingegeben.');
+        } else {
+            $n = $pdo->exec('DELETE FROM knowledge');
+            $msg = "Gesamte Wissensdatenbank gelöscht ($n Einträge)";
+            if (!empty($_POST['with_info'])) {
+                $m = $pdo->exec('DELETE FROM server_info');
+                $msg .= " und $m Server-Infos";
+            }
+            flash($msg . '.');
+        }
+    } elseif ($action === 'delete' && $id > 0) {
         $pdo->prepare('DELETE FROM knowledge WHERE id = ?')->execute([$id]);
         flash('Eintrag gelöscht.');
     } elseif (in_array($action, ['add', 'save'], true)) {
@@ -107,4 +119,18 @@ if ($page * $per < $total) {
     echo '<a class="btn sec" href="?p=' . ($page + 1) . $qs . '">Weiter »</a>';
 }
 echo '</div></div>';
+
+// ------------------------------------------------------------ Gefahrenbereich
+$allKnow = (int) $pdo->query('SELECT COUNT(*) FROM knowledge')->fetchColumn();
+$allInfo = (int) $pdo->query('SELECT COUNT(*) FROM server_info')->fetchColumn();
+echo '<div class="card" style="border-color:var(--bad)"><h2 style="color:var(--bad)">⚠ Gesamte Wissensdatenbank löschen</h2>'
+    . '<div class="flash err"><b>Achtung:</b> Es werden <b>alle ' . $allKnow . ' Einträge</b> (gelernt, durchsucht und manuell angelegt) '
+    . '<b>endgültig</b> gelöscht. Das kann nicht rückgängig gemacht werden. Der Bot kann danach keine bisher gelernten Fragen '
+    . 'mehr beantworten und muss neu lernen.</div>'
+    . '<form method="post" onsubmit="return confirm(\'Die GESAMTE Wissensdatenbank endgültig löschen?\')">' . csrf_field()
+    . '<input type="hidden" name="action" value="purge_all">'
+    . '<label style="color:var(--text)"><input type="checkbox" name="with_info" value="1" style="width:auto"> '
+    . 'Zusätzlich alle gespeicherten Server-Infos löschen (' . $allInfo . ')</label>'
+    . '<label>Zur Bestätigung <b>LÖSCHEN</b> eingeben</label><input name="confirm" autocomplete="off" placeholder="LÖSCHEN" style="max-width:240px">'
+    . '<p><button class="del">Gesamte Wissensdatenbank löschen</button></p></form></div>';
 page_footer();
