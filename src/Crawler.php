@@ -34,6 +34,10 @@ final class Crawler
     private array $ignore;
     private int $maxPerChannel;
     private int $learnWindow;
+    /** @var array<string,bool> */
+    private array $excludedChannels = [];
+    /** @var array<string,bool> */
+    private array $excludedCategories = [];
 
     /** @var array{channels:int,skipped:int,messages:int} */
     private array $stats = ['channels' => 0, 'skipped' => 0, 'messages' => 0];
@@ -69,6 +73,10 @@ final class Crawler
                 return;
             }
             echo "Durchsuche Server: {$guild->name}\n";
+            ChannelSync::sync($this->db, $guild);
+            $this->loadExclusions();
+            echo '  Ausgeschlossen im Panel: ' . count($this->excludedCategories) . ' Kategorien, '
+                . count($this->excludedChannels) . " Channels\n";
 
             $queue = [];
             foreach ($guild->channels as $channel) {
@@ -235,7 +243,7 @@ final class Crawler
             if ($ref instanceof Message && $ref->author && !$ref->author->bot && !$this->isTeam($guild, $ref->author->id)) {
                 $q = $this->clean((string) $ref->content);
                 if ($q !== '' && Text::looksLikeQuestion($q, Text::normalize($q))) {
-                    $this->knowledge->learn($q, $text, $m->author->id, $channel->id);
+                    $this->knowledge->learn($q, $text, $m->author->id, $channel->id, 'crawl');
                     unset($openQuestions[$ref->id]);
                     $answered = true;
                 }
@@ -248,7 +256,7 @@ final class Crawler
                     }
                 }
                 if ($bestId !== null) {
-                    $this->knowledge->learn($openQuestions[$bestId]['text'], $text, $m->author->id, $channel->id);
+                    $this->knowledge->learn($openQuestions[$bestId]['text'], $text, $m->author->id, $channel->id, 'crawl');
                     unset($openQuestions[$bestId]);
                     $answered = true;
                 }

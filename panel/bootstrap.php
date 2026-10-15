@@ -105,10 +105,13 @@ function page_header(string $title, string $active = ''): void
 {
     $nav = [
         'dashboard.php' => 'Dashboard',
+        'control.php' => 'Steuerung',
         'knowledge.php' => 'Wissen',
         'server_info.php' => 'Server-Infos',
+        'channels.php' => 'Channels',
         'interventions.php' => 'Eingriffe',
         'settings.php' => 'Einstellungen',
+        'updates.php' => 'Updates',
     ];
     echo '<!doctype html><html lang="de"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -137,6 +140,17 @@ function page_header(string $title, string $active = ''): void
         echo '<span class="sp"></span><a href="logout.php">Abmelden (' . h($_SESSION['user']) . ')</a></header>';
     }
     echo '<main>';
+    if (logged_in()) {
+        try {
+            $tm = db()->query("SELECT v FROM settings WHERE k = 'TEST_MODE'")->fetchColumn();
+            if (strtolower((string) $tm) === 'true') {
+                echo '<div class="flash" style="background:#f0b232;color:#1b1b1b">🧪 <b>Testmodus aktiv</b> – Teamler werden nicht '
+                    . 'ignoriert, es wird nichts gelernt. <a href="control.php" style="color:#1b1b1b;text-decoration:underline">Zur Steuerung</a></div>';
+            }
+        } catch (Throwable $e) {
+            // Banner ist optional
+        }
+    }
     $f = flash();
     if ($f !== null) {
         echo '<div class="flash">' . h($f) . '</div>';

@@ -24,7 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($norm === '' || $answer === '') {
             flash('Frage und Antwort dürfen nicht leer sein.');
         } elseif ($action === 'add') {
-            $pdo->prepare('INSERT INTO knowledge (question, normalized, answer, answered_by, channel_id, created_at) VALUES (?,?,?,?,?,?)')
+            $pdo->prepare("INSERT INTO knowledge (question, normalized, answer, answered_by, channel_id, source, created_at) VALUES (?,?,?,?,?,'panel',?)")
                 ->execute([$question, $norm, $answer, 'panel:' . $_SESSION['user'], 'panel', date('Y-m-d H:i:s')]);
             flash('Eintrag hinzugefügt.');
         } else {

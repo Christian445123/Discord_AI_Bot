@@ -44,6 +44,13 @@ final class Database
             last_used_at DATETIME NULL
         ) CHARACTER SET utf8mb4');
 
+        // Herkunft eines Eintrags: live (im Chat gelernt), crawl (aus der Server-Durchsuchung), panel (manuell)
+        try {
+            $this->pdo->exec("ALTER TABLE knowledge ADD COLUMN source VARCHAR(16) NOT NULL DEFAULT 'live'");
+        } catch (\PDOException $e) {
+            // Spalte existiert bereits
+        }
+
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS server_info (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             message_id VARCHAR(32) NOT NULL UNIQUE,
@@ -64,6 +71,29 @@ final class Database
             updated_at DATETIME NOT NULL
         ) CHARACTER SET utf8mb4');
 
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS discord_channels (
+            channel_id VARCHAR(32) PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            kind VARCHAR(16) NOT NULL,
+            parent_id VARCHAR(32) NULL,
+            parent_name VARCHAR(100) NOT NULL DEFAULT \'\',
+            position INT NOT NULL DEFAULT 0,
+            auto_reason VARCHAR(255) NOT NULL DEFAULT \'\',
+            synced_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS crawl_exclusions (
+            target_id VARCHAR(32) PRIMARY KEY,
+            kind VARCHAR(16) NOT NULL,
+            created_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS settings (
+            k VARCHAR(64) PRIMARY KEY,
+            v TEXT NOT NULL,
+            updated_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS jobs (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             type VARCHAR(32) NOT NULL,
@@ -79,6 +109,13 @@ final class Database
             v VARCHAR(255) NOT NULL,
             updated_at DATETIME NOT NULL
         ) CHARACTER SET utf8mb4');
+
+        // aeltere Installationen: v war VARCHAR(255), das reicht fuer die Update-Infos nicht
+        try {
+            $this->pdo->exec('ALTER TABLE bot_status MODIFY v TEXT NOT NULL');
+        } catch (\PDOException $e) {
+            // bereits angepasst
+        }
 
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS interventions (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

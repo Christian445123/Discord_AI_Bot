@@ -35,6 +35,24 @@ pm2 logs discord-ai-bot          # Live-Log
 Aufträge aus dem Panel (z.B. "Durchsuchung starten") werden vom laufenden Bot ausgeführt – der Bot muss also laufen.
 Nach Änderungen in den Einstellungen: `pm2 restart discord-ai-bot`.
 
+## Steuerung im Panel
+
+Unter **Steuerung** startest du alle Funktionen per Klick (Server durchsuchen, Channels synchronisieren, Update-Prüfung,
+Bot neu starten) und schaltest sie ohne Neustart ein/aus: Fragen beantworten, Lernen, Channel-Überwachung, Hinweis bei
+unbekannter Frage, **automatische Durchsuchung** (Intervall in Stunden) und der **Testmodus**.
+
+**Testmodus:** Teamler werden nicht ignoriert – ihre Nachrichten werden wie Spielernachrichten behandelt, der Bot antwortet
+nach max. 10 Sekunden und die Überwachung greift. Es wird nichts gelernt; Bot-Nachrichten sind mit „🧪 Testmodus“ markiert.
+Im Panel erscheint solange ein gelbes Banner. Nach dem Testen wieder ausschalten.
+
+## Updates von GitHub
+
+Im Panel unter **Updates**: „Auf Updates prüfen“ holt den Stand von GitHub (`git fetch`) und zeigt neue Commits;
+„Update installieren“ führt `git pull --ff-only` aus, aktualisiert bei Bedarf die Composer-Pakete und startet den Bot
+(unter pm2) automatisch neu. Voraussetzungen: Projekt per `git clone` installiert, `git` auf dem Server, Bot läuft.
+Lokale Änderungen an versionierten Dateien brechen das Update ab; die `.env` bleibt unberührt.
+Manuell: `php update.php check` bzw. `php update.php apply`.
+
 ## Server durchsuchen
 
 ```bash
@@ -48,6 +66,10 @@ längere Team-Texte (Regeln, Ankündigungen, FAQ → Tabelle `server_info`). Wie
 freigegeben sind, werden nicht gelesen. Ohne gesetzte `TEAM_ROLE_IDS` bricht die Durchsuchung ab. Personen-Erwähnungen werden vor
 dem Speichern entfernt. Weitere Channels über `CRAWL_IGNORE_CHANNEL_IDS` ausschließen. Welche Channels gelesen/übersprungen wurden,
 zeigt das Panel unter "Server-Infos". Benötigt den **Server Members Intent**.
+
+**Channels/Kategorien ausnehmen:** Im Panel unter **Channels** per Haken einzelne Channels oder ganze Kategorien von der
+Durchsuchung ausnehmen. Die Liste wird vom laufenden Bot aus Discord übernommen (alle 5 Minuten bzw. bei jeder Durchsuchung).
+Team-Channels sind dort bereits automatisch gesperrt dargestellt. Änderungen gelten ab der nächsten Durchsuchung.
 
 ## Web-Panel
 

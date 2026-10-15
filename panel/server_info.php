@@ -15,6 +15,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'delete') {
         $pdo->prepare('DELETE FROM server_info WHERE id = ?')->execute([(int) ($_POST['id'] ?? 0)]);
         flash('Eintrag gelöscht.');
+    } elseif ($action === 'purge') {
+        // Doppelte Absicherung: Bestaetigungswort muss exakt eingegeben werden
+        if (trim((string) ($_POST['confirm'] ?? '')) !== 'LÖSCHEN') {
+            flash('Nicht gelöscht: Das Bestätigungswort LÖSCHEN wurde nicht korrekt eingegeben.');
+        } else {
+            $done = [];
+            $busy = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'crawl' AND status IN ('pending','running')")->fetchColumn();
+            if ($busy > 0) {
+                flash('Nicht gelöscht: Es läuft gerade eine Durchsuchung. Bitte warten, bis sie beendet ist.');
+                header('Location: server_info.php');
+                exit;
+            }
+            if (!empty($_POST['purge_info'])) {
+                $n = $pdo->exec('DELETE FROM server_info');
+                $done[] = "$n Server-Infos";
+            }
+            if (!empty($_POST['purge_knowledge'])) {
+                $n = $pdo->exec("DELETE FROM knowledge WHERE source = 'crawl'");
+                $done[] = "$n gelernte Antworten aus der Durchsuchung";
+            }
+            if (!empty($_POST['purge_state'])) {
+                $n = $pdo->exec('DELETE FROM crawl_channels');
+                $done[] = "Durchsuchungs-Stand ($n Channels) zurückgesetzt";
+            }
+            flash($done ? 'Gelöscht: ' . implode(', ', $done) . '.' : 'Nichts ausgewählt - es wurde nichts gelöscht.');
+        }
     } elseif ($action === 'crawl') {
         // Das Panel startet nichts selbst, sondern legt einen Auftrag an; der dauerhaft laufende Bot (pm2) fuehrt ihn aus.
         $open = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'crawl' AND status IN ('pending','running')")->fetchColumn();
@@ -108,4 +134,28 @@ if ($page * $per < $total) {
     echo '<a class="btn sec" href="?p=' . ($page + 1) . $qs . '">Weiter »</a>';
 }
 echo '</div></div>';
+
+// ------------------------------------------------------------ Gefahrenbereich
+$cInfo = (int) $pdo->query('SELECT COUNT(*) FROM server_info')->fetchColumn();
+$cKnow = (int) $pdo->query("SELECT COUNT(*) FROM knowledge WHERE source = 'crawl'")->fetchColumn();
+$cState = (int) $pdo->query('SELECT COUNT(*) FROM crawl_channels')->fetchColumn();
+
+echo '<div class="card" style="border-color:var(--bad)"><h2 style="color:var(--bad)">⚠ Gefahrenbereich: Durchsuchte Inhalte löschen</h2>'
+    . '<div class="flash err"><b>Achtung:</b> Das Löschen ist <b>endgültig</b> und kann nicht rückgängig gemacht werden. '
+    . 'Der Bot verliert das daraus gelernte Wissen und kann entsprechende Fragen nicht mehr beantworten, '
+    . 'bis der Server erneut durchsucht wurde.</div>'
+    . '<form method="post" onsubmit="return confirm(\'ENDGÜLTIG löschen? Das kann nicht rückgängig gemacht werden.\')">' . csrf_field()
+    . '<input type="hidden" name="action" value="purge">'
+    . '<label style="color:var(--text)"><input type="checkbox" name="purge_info" value="1" style="width:auto"> '
+    . 'Alle gespeicherten Server-Infos (' . $cInfo . ')</label>'
+    . '<label style="color:var(--text)"><input type="checkbox" name="purge_knowledge" value="1" style="width:auto"> '
+    . 'Aus der Durchsuchung gelernte Frage/Antwort-Paare (' . $cKnow . ') <span class="mute">– im Chat gelernte und manuell '
+    . 'angelegte Antworten bleiben erhalten</span></label>'
+    . '<label style="color:var(--text)"><input type="checkbox" name="purge_state" value="1" style="width:auto"> '
+    . 'Durchsuchungs-Stand zurücksetzen (' . $cState . ' Channels) <span class="mute">– die nächste Durchsuchung liest dann wieder '
+    . 'alles von vorn</span></label>'
+    . '<label>Zur Bestätigung <b>LÖSCHEN</b> eingeben</label><input name="confirm" autocomplete="off" placeholder="LÖSCHEN" style="max-width:240px">'
+    . '<p><button class="del">Ausgewählte Inhalte endgültig löschen</button></p></form>'
+    . '<p class="mute">Hinweis: Einträge, die vor dieser Funktion durchsucht wurden, lassen sich nicht von im Chat gelernten '
+    . 'unterscheiden und bleiben unter „Wissen“ erhalten – dort einzeln löschbar.</p></div>';
 page_footer();

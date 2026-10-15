@@ -15,6 +15,7 @@ final class Bot
     private Database $db;
     private Knowledge $knowledge;
     private Moderator $moderator;
+    private Settings $settings;
 
     /** @var string[] */
     private array $teamRoles;
@@ -33,6 +34,7 @@ final class Bot
         $this->db = new Database();
         $this->knowledge = new Knowledge($this->db);
         $this->moderator = new Moderator();
+        $this->settings = new Settings($this->db);
 
         $this->teamRoles = Env::list('TEAM_ROLE_IDS');
         $this->questionChannels = Env::list('QUESTION_CHANNEL_IDS');
@@ -49,7 +51,26 @@ final class Bot
         $this->discord->on('init', function (Discord $discord) {
             echo "[Bot] Eingeloggt als {$discord->user->username}\n";
             $discord->on(Event::MESSAGE_CREATE, fn(Message $m) => $this->onMessage($m));
-            (new Jobs($this->db, $discord->getLoop()))->start();
+            // Kategorien/Channels fuer das Panel (Ausschluss-Ansicht) aktuell halten
+            $syncChannels = function () use ($discord): string {
+                try {
+                    $gid = Env::get('GUILD_ID');
+                    $guild = $gid !== '' ? $discord->guilds->get('id', $gid) : $discord->guilds->first();
+                    if ($guild === null) {
+                        return 'Server nicht gefunden (GUILD_ID pruefen)';
+                    }
+                    ChannelSync::sync($this->db, $guild);
+                    return 'Channels synchronisiert';
+                } catch (\Throwable $e) {
+                    echo '[ChannelSync] ' . $e->getMessage() . "\n";
+                    return 'Fehler: ' . $e->getMessage();
+                }
+            };
+            $syncChannels();
+            $discord->getLoop()->addPeriodicTimer(300, $syncChannels);
+
+            // Auftraege aus dem Panel, automatische Durchsuchung, Heartbeat
+            (new Jobs($this->db, $discord->getLoop(), $this->settings, ['sync_channels' => $syncChannels]))->start();
         });
         $this->discord->run();
     }
@@ -76,8 +97,32 @@ final class Bot
         }
     }
 
+    private function testMode(): bool
+    {
+        return $this->settings->bool('TEST_MODE', false);
+    }
+
+    /** Im Testmodus kennzeichnen, dass die Nachricht aus dem Test stammt. */
+    private function tag(string $text): string
+    {
+        return $this->testMode() ? "🧪 **Testmodus** – {$text}" : $text;
+    }
+
+    /** Lernt nur, wenn das Lernen im Panel aktiviert ist (und nie aus Testnachrichten). */
+    private function learn(string $question, string $answer, string $userId, string $channelId): void
+    {
+        if ($this->testMode() || !$this->settings->bool('LEARNING_ENABLED', true)) {
+            return;
+        }
+        $this->knowledge->learn($question, $answer, $userId, $channelId);
+    }
+
     private function isTeam(Message $m): bool
     {
+        // Testmodus: Teamler werden wie normale Spieler behandelt (nicht ignoriert).
+        if ($this->testMode()) {
+            return false;
+        }
         $member = $m->member;
         if ($member === null) {
             return false;
@@ -106,7 +151,7 @@ final class Bot
             // Antwort auf eine Bot-Antwort = Korrektur
             if (isset($this->botAnswers[$ref->id])) {
                 $info = $this->botAnswers[$ref->id];
-                $this->knowledge->learn($info['question'], $text, $m->author->id, $channelId);
+                $this->learn($info['question'], $text, $m->author->id, $channelId);
                 if ($info['knowledgeId'] !== null) {
                     $this->knowledge->penalize($info['knowledgeId']);
                 }
@@ -116,7 +161,7 @@ final class Bot
             if (!$ref->author->bot) {
                 $this->cancelPending($ref->id);
                 if (Text::looksLikeQuestion($ref->content, Text::normalize($ref->content))) {
-                    $this->knowledge->learn($ref->content, $text, $m->author->id, $channelId);
+                    $this->learn($ref->content, $text, $m->author->id, $channelId);
                 }
                 return;
             }
@@ -135,7 +180,7 @@ final class Bot
         if ($latestId !== null) {
             $q = $this->pending[$latestId];
             $this->cancelPending($latestId);
-            $this->knowledge->learn($q['text'], $text, $m->author->id, $channelId);
+            $this->learn($q['text'], $text, $m->author->id, $channelId);
         }
     }
 
@@ -153,7 +198,14 @@ final class Bot
             return;
         }
 
+        if (!$this->settings->bool('ANSWERS_ENABLED', true)) {
+            return;
+        }
+
         $delay = max(5, Env::int('ANSWER_DELAY_SECONDS', 90));
+        if ($this->testMode()) {
+            $delay = min($delay, 10); // im Testmodus schnell antworten
+        }
         $timer = $this->discord->getLoop()->addTimer($delay, function () use ($m) {
             $this->answerIfUnanswered($m);
         });
@@ -186,7 +238,7 @@ final class Bot
                 : "Hallo {$name}, danke für deine Frage! Das Team hat dazu bereits Folgendes mitgeteilt:\n\n{$hit['answer']}\n\n"
                   . "Falls noch etwas offen ist, melde dich gerne. Ein Teammitglied schaut bei Bedarf ebenfalls vorbei. – {$server}";
             $this->knowledge->markUsed($hit['id']);
-            $m->reply($reply)->then(function (Message $sent) use ($q, $hit) {
+            $m->reply($this->tag($reply))->then(function (Message $sent) use ($q, $hit) {
                 $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => $hit['id'], 'time' => time()];
                 $this->pruneBotAnswers();
             });
@@ -202,18 +254,18 @@ final class Bot
                   . "Falls das Ihre Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei Ihnen. – {$server}"
                 : "Hallo {$name}, danke für deine Frage! Dazu habe ich im Channel #{$info['channel']} Folgendes gefunden:\n\n{$snippet}\n\n"
                   . "Falls das deine Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei dir. – {$server}";
-            $m->reply($reply)->then(function (Message $sent) use ($q) {
+            $m->reply($this->tag($reply))->then(function (Message $sent) use ($q) {
                 $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => null, 'time' => time()];
                 $this->pruneBotAnswers();
             });
             return;
         }
 
-        if (Env::bool('FALLBACK_ENABLED', true)) {
+        if ($this->settings->bool('FALLBACK_ENABLED', true)) {
             $reply = $sie
                 ? "Hallo {$name}, vielen Dank für Ihre Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied wird sich so bald wie möglich bei Ihnen melden. Wir bitten um etwas Geduld."
                 : "Hallo {$name}, danke für deine Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied meldet sich so bald wie möglich bei dir. Bitte hab noch etwas Geduld.";
-            $m->reply($reply)->then(function (Message $sent) use ($q) {
+            $m->reply($this->tag($reply))->then(function (Message $sent) use ($q) {
                 // Wird ein Teamler hierauf antworten, soll er trotzdem als Lernquelle dienen.
                 $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => null, 'time' => time()];
                 $this->pruneBotAnswers();
@@ -248,7 +300,7 @@ final class Bot
 
     private function observeChannel(Message $m): void
     {
-        if (!Env::bool('MODERATION_ENABLED', true) || in_array($m->channel_id, $this->moderationIgnore, true)) {
+        if (!$this->settings->bool('MODERATION_ENABLED', true) || in_array($m->channel_id, $this->moderationIgnore, true)) {
             return;
         }
         $result = $this->moderator->observe($m->channel_id, $m->author->id, $m->content, time());
@@ -264,7 +316,7 @@ final class Bot
             : "Hallo zusammen {$mentions}, die Stimmung scheint gerade etwas angespannt zu sein. Wir bitten euch freundlich, "
               . "respektvoll miteinander umzugehen und sachlich zu bleiben. Vielen Dank für euer Verständnis!";
 
-        $m->channel->sendMessage($text);
+        $m->channel->sendMessage($this->tag($text));
 
         $st = $this->db->pdo()->prepare('INSERT INTO interventions (channel_id, user_ids, heat, created_at) VALUES (?,?,?,?)');
         $st->execute([$m->channel_id, implode(',', $result['users']), $result['heat'], date('Y-m-d H:i:s')]);

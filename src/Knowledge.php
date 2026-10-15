@@ -14,7 +14,7 @@ final class Knowledge
     {
     }
 
-    public function learn(string $question, string $answer, string $teamUserId, string $channelId): void
+    public function learn(string $question, string $answer, string $teamUserId, string $channelId, string $source = 'live'): void
     {
         $question = trim($question);
         $answer = trim($answer);
@@ -36,9 +36,9 @@ final class Knowledge
         }
 
         $st = $this->db->pdo()->prepare(
-            'INSERT INTO knowledge (question, normalized, answer, answered_by, channel_id, created_at) VALUES (?,?,?,?,?,?)'
+            'INSERT INTO knowledge (question, normalized, answer, answered_by, channel_id, source, created_at) VALUES (?,?,?,?,?,?,?)'
         );
-        $st->execute([$question, $norm, $answer, $teamUserId, $channelId, date('Y-m-d H:i:s')]);
+        $st->execute([$question, $norm, $answer, $teamUserId, $channelId, $source, date('Y-m-d H:i:s')]);
         // Cache direkt ergaenzen statt neu zu laden (wichtig fuer grosse Server-Durchsuchungen).
         $this->all();
         $this->cache[] = ['id' => (int) $this->db->pdo()->lastInsertId(), 'normalized' => $norm, 'answer' => $answer, 'score' => 0];
