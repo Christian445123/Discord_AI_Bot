@@ -1,0 +1,4 @@
+# LIVE-Zugangsdaten - niemals committen!
+.env
+/vendor/
+*.log

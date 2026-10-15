@@ -1,0 +1,15 @@
+{
+    "name": "viennastaterp/discord-ai-bot",
+    "description": "Selbstlernender, hoeflicher Discord-Support-Bot in PHP",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo": "*",
+        "ext-mbstring": "*",
+        "team-reflex/discord-php": "^10.0",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "autoload": {
+        "psr-4": { "App\\": "src/" }
+    }
+}
