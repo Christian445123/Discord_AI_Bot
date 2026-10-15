@@ -41,6 +41,8 @@ function logline($level, $msg)
     @file_put_contents($GLOBALS['logFile'], '[' . date('Y-m-d H:i:s') . '] ' . $level . ' ' . $msg . PHP_EOL, FILE_APPEND);
 }
 function say($s = '') { echo $s . PHP_EOL; logline('INFO ', $s); }
+/** Kuendigt eine Aktion an, bevor sie startet - so ist immer sichtbar, was gerade passiert. */
+function step($s)     { echo "  -> $s ..." . PHP_EOL; logline('STEP ', $s); }
 function ok($s)       { echo "  [OK]     $s" . PHP_EOL; logline('OK   ', $s); }
 function warn($s)     { echo "  [WARN]   $s" . PHP_EOL; logline('WARN ', $s); }
 function dbg($s)      { logline('DEBUG', $s); if ($GLOBALS['verbose']) { echo "  [debug]  $s" . PHP_EOL; } }
@@ -161,9 +163,23 @@ function run($cmd, array $env = [])
             warn('Befehl konnte nicht gestartet werden.');
             return 255;
         }
-        while (($chunk = fgets($pipes[1])) !== false) {
-            echo '    | ' . $chunk;
-            logline('OUT  ', rtrim($chunk));
+        // Rohdaten sofort durchreichen (auch Fortschritt ohne Zeilenumbruch), damit nie "nichts" zu sehen ist.
+        $buf = '';
+        while (!feof($pipes[1])) {
+            $chunk = fread($pipes[1], 4096);
+            if ($chunk === false || $chunk === '') {
+                usleep(50000);
+                continue;
+            }
+            echo $chunk;
+            $buf .= $chunk;
+            while (($pos = strpos($buf, "\n")) !== false) {
+                logline('OUT  ', rtrim(substr($buf, 0, $pos)));
+                $buf = substr($buf, $pos + 1);
+            }
+        }
+        if (trim($buf) !== '') {
+            logline('OUT  ', trim($buf));
         }
         fclose($pipes[1]);
         return proc_close($p);
@@ -276,6 +292,7 @@ say('2/5  Abhaengigkeiten installieren');
 $composerCmd = null;
 $out = [];
 $code = 1;
+step('Suche installiertes Composer');
 if (fnAvailable('exec')) {
     exec(isWindows() ? 'composer --version 2>NUL' : 'composer --version 2>/dev/null', $out, $code);
 }
@@ -285,7 +302,7 @@ if ($code === 0) {
 } else {
     $phar = __DIR__ . DIRECTORY_SEPARATOR . 'composer.phar';
     if (!is_file($phar)) {
-        say('  Composer wird heruntergeladen ...');
+        step('Composer nicht gefunden - lade composer.phar von getcomposer.org herunter (ca. 3 MB)');
         list($status, $body, $err) = httpGet('https://getcomposer.org/download/latest-stable/composer.phar', [], 120);
         dbg("Download: HTTP $status, " . strlen($body) . ' Bytes' . ($err ? ", Fehler: $err" : ''));
         if ($status !== 200 || strlen($body) < 1000000) {
@@ -299,8 +316,9 @@ if ($code === 0) {
     ok('Lokales composer.phar wird verwendet');
 }
 
+step('Installiere Bot-Pakete mit Composer (DiscordPHP, phpdotenv) - das kann 1-2 Minuten dauern');
 $code = run(
-    $composerCmd . ' install --no-dev --no-interaction --prefer-dist --optimize-autoloader',
+    $composerCmd . ' install --no-dev --no-interaction --prefer-dist --optimize-autoloader -v',
     ['COMPOSER_ALLOW_SUPERUSER' => '1', 'COMPOSER_HOME' => __DIR__ . '/.composer']
 );
 if ($code !== 0) {
@@ -375,6 +393,7 @@ foreach ($ex as $k => $v) {
 // ------------------------------------------------------------ 4. Pruefungen
 say('4/5  Zugangsdaten pruefen');
 
+step('Pruefe Discord-Token bei discord.com');
 list($status, $body, $err) = httpGet('https://discord.com/api/v10/users/@me', ['Authorization: Bot ' . $cfg['DISCORD_TOKEN']], 15);
 dbg("Discord-API: HTTP $status" . ($err ? ", Fehler: $err" : '') . ', Antwort: ' . substr($body, 0, 200));
 $botInfo = json_decode($body, true);
@@ -392,6 +411,7 @@ if ($status === 200 && is_array($botInfo) && isset($botInfo['id'], $botInfo['use
 
 $pdo = null;
 $dbName = str_replace('`', '', $cfg['DB_NAME']);
+step('Verbinde mit Datenbank-Server ' . $cfg['DB_HOST'] . ':' . $cfg['DB_PORT']);
 try {
     $pdo = new PDO(
         sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $cfg['DB_HOST'], (int) $cfg['DB_PORT']),
@@ -405,6 +425,7 @@ try {
     fwrite(STDERR, '  [FEHLER] Datenbank: ' . $e->getMessage() . PHP_EOL);
     fail('Datenbank-Verbindung fehlgeschlagen. Hinweis: ' . dbHint($e));
 }
+step("Lege Datenbank '$dbName' an, falls sie fehlt");
 try {
     $pdo->exec("CREATE DATABASE IF NOT EXISTS `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
     ok("Datenbank '$dbName' vorhanden");
@@ -412,7 +433,7 @@ try {
     warn('CREATE DATABASE nicht moeglich: ' . $e->getMessage() . ' - versuche, die Datenbank direkt zu verwenden.');
 }
 
-// .env schreiben (nach erfolgreicher Pruefung)
+step('Schreibe Zugangsdaten in die .env');
 $lines = ['# LIVE-Datei - erzeugt von install.php. Nicht auf GitHub hochladen!'];
 foreach ($cfg as $k => $v) {
     $lines[] = $k . '=' . envQuote((string) $v);
@@ -423,7 +444,7 @@ if (file_put_contents($envPath, implode(PHP_EOL, $lines) . PHP_EOL) === false) {
 @chmod($envPath, 0600);
 ok('.env geschrieben (' . $envPath . ')');
 
-// Tabellen anlegen
+step('Lege Tabellen an (knowledge, interventions)');
 require __DIR__ . '/vendor/autoload.php';
 foreach ($cfg as $k => $v) {
     $_ENV[$k] = (string) $v;
@@ -466,7 +487,7 @@ if (askYesNo("Web-Panel jetzt im Hintergrund starten (http://localhost:{$panelPo
 say();
 
 if (askYesNo('Bot jetzt starten?', true)) {
-    say('  Bot laeuft - Ausgabe live unten, mit Strg+C beenden.');
+    step('Starte Bot (php bot.php) - Ausgabe live unten, mit Strg+C beenden');
     $code = run(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/bot.php'));
     say("  Bot beendet (Exit-Code $code).");
 } else {
