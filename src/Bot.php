@@ -228,8 +228,84 @@ final class Bot
 
     // ------------------------------------------------------------------ Antworten
 
+    /** @var array<string,int> Verwarnungen pro Person und Channel (gegen Mehrfach-Hinweise) */
+    private array $mentionWarned = [];
+
+    /**
+     * Spieler duerfen weder @everyone/@here verwenden noch Teamler (per Name oder Rolle) markieren.
+     * Es wird nur ein freundlicher Hinweis gesendet - ohne Strafe.
+     */
+    private function checkMentions(Message $m): void
+    {
+        if (!$this->settings->bool('MENTION_PROTECTION_ENABLED', true)) {
+            return;
+        }
+        $content = (string) $m->content;
+        if ($content === '') {
+            return;
+        }
+
+        $teamRoleIds = array_values(array_filter(array_unique(array_merge(
+            $this->teamRoles,
+            Env::list('TEAM_PING_ROLE_IDS'),
+            [Env::get('MOD_ROLE_ID')]
+        ))));
+
+        // @everyone / @here und Team-Rollen (direkt aus dem Text, damit Antworten per Reply nicht faelschlich zaehlen)
+        $everyone = (bool) preg_match('/@(everyone|here)\b/i', $content);
+        preg_match_all('/<@&(\d+)>/', $content, $roleMatches);
+        $roleHit = array_intersect($roleMatches[1], $teamRoleIds) !== [];
+        if ($everyone || $roleHit) {
+            $this->warnMention($m, $everyone);
+            return;
+        }
+
+        // einzelne Teamler per Name markiert?
+        preg_match_all('/<@!?(\d+)>/', $content, $userMatches);
+        $ids = array_values(array_diff(array_unique($userMatches[1]), [$m->author->id]));
+        if ($ids === [] || $teamRoleIds === []) {
+            return;
+        }
+        $guild = $this->discord->guilds->get('id', $m->guild_id);
+        if ($guild === null) {
+            return;
+        }
+        foreach (array_slice($ids, 0, 5) as $id) {
+            $guild->members->fetch($id)->then(function ($member) use ($m, $teamRoleIds) {
+                foreach ($teamRoleIds as $roleId) {
+                    if ($member->roles->has($roleId)) {
+                        $this->warnMention($m, false);
+                        return;
+                    }
+                }
+            }, function () {
+                // Nutzer nicht (mehr) auf dem Server - nichts zu tun
+            });
+        }
+    }
+
+    private function warnMention(Message $m, bool $everyone): void
+    {
+        $key = $m->author->id . '|' . $m->channel_id;
+        if (isset($this->mentionWarned[$key]) && time() - $this->mentionWarned[$key] < 60) {
+            return;
+        }
+        $this->mentionWarned[$key] = time();
+        $this->trace($m, 'Teamler/@everyone markiert - Hinweis wird gesendet');
+        echo "[Markierung] {$m->author->username} hat " . ($everyone ? '@everyone/@here' : 'Teammitglieder') . " markiert - Hinweis gesendet\n";
+
+        $name = $m->author->username;
+        $sie = strtolower(Env::get('ADDRESS_FORM', 'du')) === 'sie';
+        $text = $sie
+            ? "Hallo {$name}, bitte verwenden Sie kein @everyone oder @here und markieren Sie keine Teammitglieder – weder per Name noch per Rolle. Das ist nicht erlaubt. Das Team sieht Ihre Nachricht auch ohne Markierung und meldet sich so bald wie möglich. Vielen Dank für Ihr Verständnis!"
+            : "Hallo {$name}, bitte verwende kein @everyone oder @here und markiere keine Teammitglieder – weder per Name noch per Rolle. Das ist nicht erlaubt. Das Team sieht deine Nachricht auch ohne Markierung und meldet sich so bald wie möglich. Vielen Dank für dein Verständnis!";
+        $text = str_replace(['@everyone', '@here'], ['@​everyone', '@​here'], $text);
+        $m->reply($this->tag($text));
+    }
+
     private function handlePlayerMessage(Message $m): void
     {
+        $this->checkMentions($m);
         $this->observeChannel($m);
 
         $parentId = $this->parentOf($m);
@@ -304,27 +380,39 @@ final class Bot
         $kid = $hit['id'] ?? null;
         $this->trace($m, "Wissen gefunden: " . count($context) . " Treffer" . ($context ? ", bester Wert " . round((float) $context[0]["score"], 2) : "") . ($hit ? " (gelernte Team-Antwort)" : ""));
 
-        // Nichts Passendes gelernt: freundlicher Hinweis (wird in den Antwort-Channels immer gesendet)
-        if ($context === []) {
-            if ($this->settings->bool('FALLBACK_ENABLED', true) || !empty($q['priority'])) {
-                $reply = $sie
-                    ? "Hallo {$name}, vielen Dank für Ihre Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied wird sich so bald wie möglich bei Ihnen melden. Wir bitten um etwas Geduld."
-                    : "Hallo {$name}, danke für deine Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied meldet sich so bald wie möglich bei dir. Bitte hab noch etwas Geduld.";
-                $this->sendAnswer($m, $reply, $q['text'], null);
-            }
+        // Nur antworten, wenn der Treffer sicher genug ist - sonst das Team markieren
+        $confident = $hit !== null || ($context !== [] && (float) $context[0]['score'] >= Env::float('SEARCH_MIN_SCORE', 0.6));
+        if (!$confident) {
+            $this->askTeam($m, $q, $name, $sie);
             return;
         }
 
-        // Antwort aus den gefundenen Informationen bauen (regelbasiert, ohne KI-Modell)
+        // Antwort aus den gefundenen Informationen bauen (regelbasiert, ohne KI-Modell) - nur die Antwort, ohne Quellenangabe
         $this->sendAnswer($m, Answer::compose($this->knowledge, $context, $q['text'], $name, $sie, $server), $q['text'], $kid);
     }
 
-    /** Antwort senden und merken, damit Teamler sie per Reply korrigieren koennen. */
-    private function sendAnswer(Message $m, string $text, string $question, ?int $knowledgeId): void
+    /** Der Bot weiss nicht weiter: Team automatisch markieren. */
+    private function askTeam(Message $m, array $q, string $name, bool $sie): void
     {
-        // keine Massen-Erwaehnungen, egal was in Wissen steht
+        if (!$this->settings->bool('FALLBACK_ENABLED', true) && empty($q['priority'])) {
+            return;
+        }
+        $roles = Env::list('TEAM_PING_ROLE_IDS') ?: array_slice(Env::list('TEAM_ROLE_IDS'), 0, 1);
+        $ping = $roles ? ' ' . implode(' ', array_map(fn($id) => "<@&{$id}>", $roles)) : '';
+        $text = $sie
+            ? "Hallo {$name}, dazu kann ich Ihnen leider keine sichere Antwort geben. Ich habe das Team benachrichtigt, es meldet sich bei Ihnen.{$ping}"
+            : "Hallo {$name}, dazu kann ich dir leider keine sichere Antwort geben. Ich habe das Team benachrichtigt, es meldet sich bei dir.{$ping}";
+        $this->trace($m, 'kein sicherer Treffer - Team wird markiert' . ($ping === '' ? ' (TEAM_PING_ROLE_IDS/TEAM_ROLE_IDS nicht gesetzt)' : ''));
+        // Frage merken: antwortet ein Teamler per Reply auf diese Nachricht, lernt der Bot daraus
+        $this->sendAnswer($m, $text, $q['text'], null, true);
+    }
+
+    /** Antwort senden und merken, damit Teamler sie per Reply korrigieren koennen. */
+    private function sendAnswer(Message $m, string $text, string $question, ?int $knowledgeId, bool $keepRolePings = false): void
+    {
+        // keine Massen-Erwaehnungen, egal was in Wissen steht (Team-Markierung nur beim Hinweis an das Team)
         $text = str_replace(['@everyone', '@here'], ['@​everyone', '@​here'], $text);
-        $text = preg_replace('/<@[!&]?\d+>/', '', $text) ?? $text;
+        $text = preg_replace($keepRolePings ? '/<@!?\d+>/' : '/<@[!&]?\d+>/', '', $text) ?? $text;
         $text = mb_strimwidth($text, 0, 1900, '…');
 
         $m->reply($this->tag($text))->then(function (Message $sent) use ($question, $knowledgeId) {

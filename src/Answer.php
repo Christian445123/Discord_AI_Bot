@@ -14,36 +14,17 @@ final class Answer
     private const MAX_SENTENCES = 4;
 
     /**
+     * Liefert nur die Antwort selbst - ohne Begruessung, Quellenangabe oder Abschlussformel.
+     *
      * @param array<int,array{type:string,id:int,text:string,channel:string,score:float}> $context beste Treffer, bester zuerst
      */
-    public static function compose(Knowledge $knowledge, array $context, string $question, string $name, bool $sie, string $server): string
+    public static function compose(Knowledge $knowledge, array $context, string $question, string $name = '', bool $sie = false, string $server = ''): string
     {
         $qTokens = Text::tokens(Text::normalize($question));
         $idf = $knowledge->weights($qTokens);
 
-        [$body, $channels, $fromTeam] = self::selectBody($context, $qTokens, $idf);
-
-        $lead = $fromTeam
-            ? 'Das Team hat dazu bereits Folgendes mitgeteilt:'
-            : (count($channels) === 1 ? "Dazu steht im Channel #{$channels[0]} Folgendes:" : 'Dazu habe ich Folgendes gefunden:');
-
-        $seed = crc32(Text::normalize($question));
-        $greet = $sie
-            ? self::pick($seed, ["Hallo {$name}, vielen Dank für Ihre Frage!", "Guten Tag {$name}, danke für Ihre Nachricht!", "Hallo {$name}, gerne helfe ich Ihnen weiter!"])
-            : self::pick($seed, ["Hallo {$name}, danke für deine Frage!", "Hallo {$name}, gerne helfe ich dir weiter!", "Hi {$name}, danke für deine Nachricht!"]);
-        $closing = $sie
-            ? self::pick($seed >> 3, [
-                'Falls noch etwas offen ist, melden Sie sich gerne – ein Teammitglied hilft Ihnen bei Bedarf weiter.',
-                'Sollte das Ihre Frage nicht vollständig beantworten, schaut gerne noch ein Teammitglied vorbei.',
-                'Bei weiteren Fragen sind wir jederzeit für Sie da.',
-            ])
-            : self::pick($seed >> 3, [
-                'Falls noch etwas offen ist, melde dich gerne – ein Teammitglied hilft dir bei Bedarf weiter.',
-                'Sollte das deine Frage nicht vollständig beantworten, schaut gerne noch ein Teammitglied vorbei.',
-                'Bei weiteren Fragen sind wir jederzeit für dich da.',
-            ]);
-
-        return "{$greet} {$lead}\n\n{$body}\n\n{$closing} – {$server}";
+        [$body] = self::selectBody($context, $qTokens, $idf);
+        return $body;
     }
 
     /** @return array{0:string,1:string[],2:bool} [Text, Channels, stammt direkt vom Team] */

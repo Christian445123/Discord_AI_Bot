@@ -14,6 +14,7 @@ $toggles = [
     'LEARNING_ENABLED' => ['Von Teamlern lernen', 'Antworten von Teamlern werden als Wissen gespeichert.', true],
     'MODERATION_ENABLED' => ['Channel-Überwachung', 'Der Bot greift bei Streit/Beleidigungen deeskalierend ein.', true],
     'FALLBACK_ENABLED' => ['Hinweis bei unbekannter Frage', 'Freundlicher Hinweis, wenn der Bot keine Antwort kennt.', true],
+    'MENTION_PROTECTION_ENABLED' => ['Markierungs-Schutz', 'Spieler werden freundlich darauf hingewiesen, wenn sie @everyone/@here verwenden oder Teamler (per Name oder Rolle) markieren.', true],
     'CRAWL_AUTO_ENABLED' => ['Automatische Durchsuchung', 'Der Bot durchsucht den Server regelmäßig selbst (Intervall siehe unten).', false],
     'TEST_MODE' => ['Testmodus', 'Teamler werden NICHT ignoriert: Ihre Nachrichten werden wie Spielernachrichten behandelt '
         . '(Fragen werden beantwortet, Überwachung greift, kurze Wartezeit). Es wird nichts gelernt, Antworten sind mit „Testmodus“ gekennzeichnet.', false],

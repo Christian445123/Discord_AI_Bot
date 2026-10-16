@@ -56,6 +56,10 @@ vom Team schon beantwortet, gibt er diese Antwort im Original wieder. Weiß der 
 trotzdem mit einem freundlichen Hinweis. Wer sofort statt nach `ANSWER_DELAY_SECONDS` (Wartezeit, ob ein Teamler schneller ist)
 antworten soll, setzt den Wert niedrig (min. 5). Die Trefferschwelle steuert `SEARCH_MIN_SCORE`.
 
+Die Antwort enthält **nur den Antworttext** – ohne Begrüßung, Quellenangabe oder Abschlussformel. Findet der Bot keinen
+ausreichend sicheren Treffer (unter `SEARCH_MIN_SCORE`), **markiert er automatisch das Team** (Rollen aus `TEAM_PING_ROLE_IDS`,
+leer = erste Rolle aus `TEAM_ROLE_IDS`). Antwortet ein Teamler auf diese Nachricht per Reply, lernt der Bot die Antwort.
+
 ## Wo der Bot antwortet
 
 - `QUESTION_CHANNEL_IDS`: Channels, in denen der Bot auf **Fragen** antwortet (leer = überall).
