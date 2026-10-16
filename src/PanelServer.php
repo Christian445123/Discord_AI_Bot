@@ -66,8 +66,8 @@ final class PanelServer
     private function spawn(): void
     {
         $this->lastStart = time();
-        $port = max(1, Env::int('PANEL_PORT', 8080));
-        $log = $this->root . DIRECTORY_SEPARATOR . 'panel.log';
+        $port = $this->pickPort();
+        $log =$this->root . DIRECTORY_SEPARATOR . 'panel.log';
         $windows = stripos(PHP_OS_FAMILY, 'Windows') === 0;
 
         $env = null;
@@ -90,6 +90,24 @@ final class PanelServer
         $pid = (int) (proc_get_status($proc)['pid'] ?? 0);
         @file_put_contents($this->root . DIRECTORY_SEPARATOR . 'panel.pid', (string) $pid);
         echo "[Panel] Web-Panel laeuft auf Port {$port} (PID {$pid}, Log: panel.log)\n";
+    }
+
+    /** Port aus PANEL_PORT (.env). Ist er belegt, wird der naechste freie genommen und darauf hingewiesen. */
+    private function pickPort(): int
+    {
+        $wanted = max(1, Env::int('PANEL_PORT', 8080));
+        for ($p = $wanted; $p < $wanted + 20; $p++) {
+            $s = @stream_socket_server('tcp://0.0.0.0:' . $p, $errno, $errstr);
+            if ($s !== false) {
+                fclose($s);
+                if ($p !== $wanted) {
+                    echo "[Panel] Port {$wanted} ist belegt - verwende stattdessen {$p}. Fest einstellen: PANEL_PORT={$p} in der .env\n";
+                }
+                return $p;
+            }
+        }
+        echo "[Panel] Kein freier Port ab {$wanted} gefunden - bitte PANEL_PORT in der .env aendern\n";
+        return $wanted;
     }
 
     private function stop(): void

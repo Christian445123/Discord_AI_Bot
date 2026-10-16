@@ -13,6 +13,12 @@ use App\Env;
 
 App\Env::load(__DIR__);
 
+// Neue Einstellungen aus .env.example, die in der .env fehlen, automatisch ergaenzen (z.B. PANEL_PORT)
+$added = Env::addMissingKeys(__DIR__);
+if ($added !== []) {
+    echo '[Env] In der .env ergaenzt: ' . implode(', ', $added) . " - bei Bedarf dort anpassen.\n";
+}
+
 foreach (['DISCORD_TOKEN', 'DB_NAME', 'DB_USER'] as $required) {
     if (Env::get($required) === '') {
         fwrite(STDERR, "Fehlende Einstellung in .env: {$required}\n");

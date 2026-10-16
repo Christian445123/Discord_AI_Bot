@@ -9,6 +9,7 @@ require_login();
 
 /** Nur diese Schluessel sind im Panel aenderbar - Token und DB-Zugang bewusst nicht. */
 $fields = [
+    'PANEL_PORT' => ['Port des Web-Panels (Bot-Neustart nötig)', 'number'],
     'SERVER_NAME' => ['Servername', 'text'],
     'ADDRESS_FORM' => ['Anrede', 'select:du,sie'],
     'TEAM_ROLE_IDS' => ['Team-Rollen-IDs (kommagetrennt)', 'text'],
