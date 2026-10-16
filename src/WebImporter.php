@@ -87,14 +87,40 @@ final class WebImporter
         ];
     }
 
+    /** Von welchen IPs gehen Abrufe dieses Servers tatsaechlich raus? (nur fuer die Fehlerdiagnose) */
+    private function outboundIps(): string
+    {
+        if (!function_exists('curl_init')) {
+            return '';
+        }
+        $out = [];
+        foreach (['IPv4' => 'https://api.ipify.org', 'IPv4/IPv6 (Standard)' => 'https://api64.ipify.org'] as $label => $url) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6]);
+            if ($label === 'IPv4') {
+                curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            }
+            $ip = curl_exec($ch);
+            curl_close($ch);
+            if (is_string($ip) && $ip !== '') {
+                $out[] = "{$label}: " . trim($ip);
+            }
+        }
+        return $out ? ' Ausgehende IP dieses Servers -> ' . implode(' | ', $out) . '.' : '';
+    }
+
     /** Erklaert eine Sperre (403/429/503) moeglichst konkret. */
     private function blockedHint(int $status, string $body, array $respHeaders): string
     {
         $server = $respHeaders['server'] ?? '';
         $cf = isset($respHeaders['cf-ray']) || stripos($server, 'cloudflare') !== false || stripos($body, 'cf-chl') !== false || stripos($body, 'Just a moment') !== false;
         $hint = "HTTP {$status}" . ($server !== '' ? " (Server: {$server})" : '');
+        if (isset($respHeaders['cf-mitigated'])) {
+            $hint .= " [cf-mitigated: {$respHeaders['cf-mitigated']}]";
+        }
         if ($cf) {
             $hint .= ' - Cloudflare-Schutz blockiert den Abruf. In Cloudflare unter Sicherheit > WAF eine Ausnahme fuer die Server-IP des Bots anlegen oder den Bot-Schutz fuer /regelwerk.php u.a. lockern.';
+            $hint .= $this->outboundIps() . " Pruefen: Ist genau diese IP in der Cloudflare-Regel eingetragen (IPv4 UND ggf. IPv6)? Falls der Bot-Kampfmodus aktiv ist, hilft nur eine IP-Zugriffsregel (Zulassen) oder WEB_RESOLVE_IP.";
         } elseif (in_array($status, [403, 429, 503], true)) {
             $hint .= ' - die Website lehnt den Abruf ab. Server-IP des Bots in der Firewall/WAF/Hoster-Schutz der Website freigeben'
                 . ' oder WEB_USER_AGENT in der .env anpassen. Pruefen mit: curl -I ' . 'https://viennastaterp.at/ (vom Bot-Server aus).';
@@ -129,6 +155,7 @@ final class WebImporter
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 3, CURLOPT_TIMEOUT => 25,
                 CURLOPT_USERAGENT => $this->userAgent(), CURLOPT_ENCODING => '', CURLOPT_HTTPHEADER => $this->headers(),
+                CURLOPT_IPRESOLVE => Env::bool('WEB_FORCE_IPV4', true) ? CURL_IPRESOLVE_V4 : CURL_IPRESOLVE_WHATEVER,
                 CURLOPT_HEADERFUNCTION => function ($ch, string $line) use (&$respHeaders): int {
                     if (str_contains($line, ':')) {
                         [$k, $v] = explode(':', $line, 2);
