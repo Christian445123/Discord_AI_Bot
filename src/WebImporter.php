@@ -83,6 +83,7 @@ final class WebImporter
             'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language: de-AT,de;q=0.9,en;q=0.7',
             'Cache-Control: no-cache',
+            ...(Env::get('WEB_EXTRA_HEADER') !== '' ? [Env::get('WEB_EXTRA_HEADER')] : []),
         ];
     }
 
@@ -101,6 +102,25 @@ final class WebImporter
         return $hint;
     }
 
+    /**
+     * WEB_RESOLVE_IP: ruft die Website direkt beim Server (Origin) ab und umgeht damit Cloudflare.
+     * Sinnvoll, wenn die Website auf demselben Server laeuft (127.0.0.1) oder die Origin-IP bekannt ist.
+     *
+     * @param \CurlHandle $ch
+     */
+    private function applyDirectAccess($ch, string $url): void
+    {
+        $ip = Env::get('WEB_RESOLVE_IP');
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        if ($ip === '' || $host === '') {
+            return;
+        }
+        curl_setopt($ch, CURLOPT_RESOLVE, ["{$host}:443:{$ip}", "{$host}:80:{$ip}"]);
+        // Origin-Zertifikate (z.B. von Cloudflare) sind fuer curl oft nicht vertrauenswuerdig; Ziel ist der eigene Server
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    }
+
     private function fetch(string $url): array
     {
         if (function_exists('curl_init')) {
@@ -117,6 +137,7 @@ final class WebImporter
                     return strlen($line);
                 },
             ]);
+            $this->applyDirectAccess($ch, $url);
             $body = curl_exec($ch);
             $err = $body === false ? curl_error($ch) : '';
             $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);

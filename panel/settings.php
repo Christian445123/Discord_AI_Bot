@@ -11,7 +11,7 @@ require_login();
  */
 
 /** Zugangsdaten - bewusst nicht im Panel aenderbar (nur in der .env bzw. per install.php). */
-$secret = ['DISCORD_TOKEN', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASS', 'PANEL_PASSWORD_HASH', 'WEB_TRIGGER_TOKEN'];
+$secret = ['DISCORD_TOKEN', 'DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASS', 'PANEL_PASSWORD_HASH', 'WEB_TRIGGER_TOKEN', 'WEB_EXTRA_HEADER'];
 /** Schalter, die unter "Steuerung" sofort (ohne Neustart) gelten - hier waere der Wert wirkungslos. */
 $managedInControl = ['ANSWERS_ENABLED', 'LEARNING_ENABLED', 'MODERATION_ENABLED', 'FALLBACK_ENABLED', 'CRAWL_AUTO_ENABLED',
     'TEST_MODE', 'MENTION_PROTECTION_ENABLED', 'CRAWL_INTERVAL_HOURS', 'WEB_AUTO_ENABLED', 'WEB_INTERVAL_HOURS'];
