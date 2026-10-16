@@ -35,7 +35,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     $pdo->commit();
-    flash("Gespeichert: $n Ausschlüsse. Gilt ab der nächsten Durchsuchung.");
+
+    // Bereits gespeichertes Wissen aus ausgenommenen Channels/Kategorien (und Team-Channels) sofort entfernen
+    $removed = App\Exclusions::purge($pdo);
+    flash("Gespeichert: $n Ausschlüsse. Entfernt: {$removed['knowledge']} gelernte Antworten und {$removed['info']} Server-Infos "
+        . 'aus ausgenommenen Channels. Ausgenommene Channels werden nicht mehr durchsucht oder gelernt.');
     header('Location: channels.php');
     exit;
 }

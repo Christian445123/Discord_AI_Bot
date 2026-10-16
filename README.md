@@ -35,6 +35,27 @@ pm2 logs discord-ai-bot          # Live-Log
 Aufträge aus dem Panel (z.B. "Durchsuchung starten") werden vom laufenden Bot ausgeführt – der Bot muss also laufen.
 Nach Änderungen in den Einstellungen: `pm2 restart discord-ai-bot`.
 
+## Wie das Panel Aufträge ausführt
+
+Klickst du im Panel auf z.B. „Durchsuchung starten“, entsteht ein Auftrag. Läuft der Bot (pm2), führt er ihn aus.
+Ist der Bot offline oder übernimmt er den Auftrag nicht innerhalb von 20 Sekunden, startet **das Panel ihn selbst**
+über `run_job.php` im Hintergrund – es muss also nichts in der Konsole eingegeben werden. Voraussetzung: PHP darf
+Programme starten (`exec`/`shell_exec`/`proc_open` nicht in `disable_functions`). Bei Problemen die Dateien
+`jobrunner.log`, `crawl.log` und `panel-error.log` ansehen. Liegt das PHP-CLI nicht im Pfad, in der `.env`
+`PHP_CLI=/pfad/zu/php` setzen.
+
+## Wo der Bot antwortet
+
+- `QUESTION_CHANNEL_IDS`: Channels, in denen der Bot auf **Fragen** antwortet (leer = überall).
+- `ALWAYS_ANSWER_CHANNEL_IDS`: Channels (z.B. Support-Chat), in denen er auf **jede** Nachricht (ab 10 Zeichen) antwortet.
+- `ANSWER_ONLY_CATEGORY_IDS`: Kategorien (z.B. „Erstellte Tickets“): dort antwortet der Bot **immer** auf jede Nachricht,
+  liest/lernt aber **nichts** aus diesen Channels (auch nicht bei der Durchsuchung).
+- `ANSWER_SOURCE_CHANNEL_IDS`: Ausnahme in einer Antwort-Kategorie – dieser Channel (z.B. das Wissens-Ticket) wird komplett
+  ausgewertet (alle Nachrichten inkl. Bot-Embeds, in Abschnitten gespeichert) und dient als Informationsquelle.
+
+Der Bot wartet `ANSWER_DELAY_SECONDS`, ob ein Teamler zuerst antwortet; in diesen Channels erscheint bei unbekannter Frage
+immer der freundliche Hinweis. Änderungen an diesen Werten brauchen einen Bot-Neustart (`pm2 restart discord-ai-bot`).
+
 ## Steuerung im Panel
 
 Unter **Steuerung** startest du alle Funktionen per Klick (Server durchsuchen, Channels synchronisieren, Update-Prüfung,

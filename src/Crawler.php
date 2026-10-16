@@ -34,13 +34,20 @@ final class Crawler
     private array $ignore;
     private int $maxPerChannel;
     private int $learnWindow;
+    /** @var string[] Ticket-Kategorien: nur antworten, keine Wissensquelle */
+    private array $answerCats = [];
+    /** @var string[] ausdruecklich freigegebene Quell-Channels (z.B. Wissens-Ticket) */
+    private array $sourceAllow = [];
     /** @var array<string,bool> */
     private array $excludedChannels = [];
     /** @var array<string,bool> */
     private array $excludedCategories = [];
 
-    /** @var array{channels:int,skipped:int,messages:int} */
-    private array $stats = ['channels' => 0, 'skipped' => 0, 'messages' => 0];
+    /** @var array<string,int> */
+    private array $stats = ['channels' => 0, 'skipped' => 0, 'messages' => 0, 'pairs' => 0, 'infos' => 0, 'team' => 0, 'empty' => 0];
+    private bool $full = false;
+    /** @var array<string,bool> */
+    private array $unknownMembers = [];
 
     public function __construct()
     {
@@ -50,15 +57,17 @@ final class Crawler
             exit(1);
         }
         $this->ignore = Env::list('CRAWL_IGNORE_CHANNEL_IDS');
+        $this->answerCats = Env::list('ANSWER_ONLY_CATEGORY_IDS');
+        $this->sourceAllow = Env::list('ANSWER_SOURCE_CHANNEL_IDS');
         $this->maxPerChannel = max(100, Env::int('CRAWL_MAX_MESSAGES_PER_CHANNEL', 3000));
         $this->learnWindow = Env::int('LEARN_WINDOW_SECONDS', 900);
+        $this->full = in_array('full', $GLOBALS['argv'] ?? [], true);
 
         $this->db = new Database();
         $this->knowledge = new Knowledge($this->db);
         $this->discord = new Discord([
             'token' => Env::get('DISCORD_TOKEN'),
-            'intents' => Intents::getDefaultIntents() | Intents::MESSAGE_CONTENT | Intents::GUILD_MEMBERS,
-            'loadAllMembers' => true,
+            'intents' => Intents::getDefaultIntents() | Intents::MESSAGE_CONTENT,
         ]);
     }
 
@@ -77,6 +86,13 @@ final class Crawler
             $this->loadExclusions();
             echo '  Ausgeschlossen im Panel: ' . count($this->excludedCategories) . ' Kategorien, '
                 . count($this->excludedChannels) . " Channels\n";
+            echo '  Modus: ' . ($this->full ? 'komplett neu einlesen' : 'nur neue Nachrichten') . "\n";
+
+            // Wissen aus inzwischen ausgenommenen oder Team-Channels entfernen
+            $purged = Exclusions::purge($this->db->pdo());
+            if ($purged['info'] + $purged['knowledge'] > 0) {
+                echo "  Entfernt (aus ausgenommenen/Team-Channels): {$purged['knowledge']} Antworten, {$purged['info']} Infos\n";
+            }
 
             $queue = [];
             foreach ($guild->channels as $channel) {
@@ -91,9 +107,20 @@ final class Crawler
             }
             $chain->then(function () use ($discord) {
                 echo sprintf(
-                    "\nFertig: %d Channels gelesen, %d uebersprungen, %d Nachrichten ausgewertet.\n",
-                    $this->stats['channels'], $this->stats['skipped'], $this->stats['messages']
+                    "\nFertig: %d Channels gelesen, %d uebersprungen, %d Nachrichten ausgewertet (%d vom Team).\n"
+                    . "        Gelernt: %d Frage/Antwort-Paare, %d Infos gespeichert.\n",
+                    $this->stats['channels'], $this->stats['skipped'], $this->stats['messages'], $this->stats['team'],
+                    $this->stats['pairs'], $this->stats['infos']
                 );
+                if ($this->stats['messages'] > 0 && $this->stats['team'] === 0) {
+                    echo "        ACHTUNG: Es wurde kein Teamler erkannt. TEAM_ROLE_IDS pruefen (Rollen-IDs, nicht Namen).\n";
+                }
+                if ($this->stats['messages'] > 0 && $this->stats['empty'] >= $this->stats['messages']) {
+                    echo "        ACHTUNG: Alle Nachrichten waren ohne Text. Message Content Intent im Developer Portal aktivieren!\n";
+                }
+                if ($this->stats['messages'] === 0) {
+                    echo "        Es gab keine neuen Nachrichten. Fuer ein komplettes Neu-Einlesen: php crawl.php full (bzw. im Panel 'Komplett neu einlesen').\n";
+                }
                 $discord->close();
             }, function ($e) use ($discord) {
                 echo 'Abbruch: ' . (is_object($e) && method_exists($e, 'getMessage') ? $e->getMessage() : (string) $e) . "\n";
@@ -113,6 +140,14 @@ final class Crawler
         }
         if (isset($this->excludedChannels[$channel->id])) {
             return 'im Panel ausgeschlossen';
+        }
+        // Ausdruecklich freigegebener Quell-Channel (z.B. Wissens-Ticket): immer lesen
+        if (in_array($channel->id, $this->sourceAllow, true)) {
+            return null;
+        }
+        // Ticket-Kategorie: der Bot antwortet dort nur, liest sie aber nicht
+        if ($channel->parent_id && in_array($channel->parent_id, $this->answerCats, true)) {
+            return 'Ticket-Kategorie: nur Antworten, keine Wissensquelle';
         }
         if ($channel->parent_id && isset($this->excludedCategories[$channel->parent_id])) {
             return 'Kategorie im Panel ausgeschlossen';
@@ -147,33 +182,62 @@ final class Crawler
             return resolve(null);
         }
 
-        $st = $this->db->pdo()->prepare('SELECT newest_message_id FROM crawl_channels WHERE channel_id = ?');
-        $st->execute([$channel->id]);
-        $stopAt = $st->fetchColumn() ?: null;
+        $stopAt = null;
+        if (!$this->full) {
+            $st = $this->db->pdo()->prepare('SELECT newest_message_id FROM crawl_channels WHERE channel_id = ?');
+            $st->execute([$channel->id]);
+            $stopAt = $st->fetchColumn() ?: null;
+        }
 
         echo "  [lese]          #{$name}" . ($stopAt ? ' (nur neue Nachrichten)' : '') . " ...\n";
 
         return $this->fetchHistory($channel, $stopAt)->then(
-            function (array $messages) use ($guild, $channel, $name, $stopAt) {
+            function (array $messages) use ($guild, $channel, $stopAt) {
                 $this->stats['channels']++;
                 $this->stats['messages'] += count($messages);
-                $newest = $stopAt;
+
+                $authors = [];
                 foreach ($messages as $m) {
-                    if ($newest === null || (int) $m->id > (int) $newest) {
-                        $newest = $m->id;
+                    if ($m->author && !$m->author->bot) {
+                        $authors[$m->author->id] = true;
                     }
                 }
-                $this->evaluate($guild, $channel, $messages);
-                $this->saveChannelState($channel, 'read', '', $newest, count($messages));
-                echo '                  ' . count($messages) . " Nachrichten ausgewertet\n";
-            },
-            function ($e) use ($channel, $name) {
-                $msg = is_object($e) && method_exists($e, 'getMessage') ? $e->getMessage() : (string) $e;
-                echo "  [Fehler]        #{$name}: {$msg}\n";
-                $this->stats['skipped']++;
-                $this->saveChannelState($channel, 'error', mb_substr($msg, 0, 250), null, 0);
+                return $this->ensureMembers($guild, array_keys($authors))->then(function () use ($guild, $channel, $messages, $stopAt) {
+                    $r = $this->evaluate($guild, $channel, $messages);
+                    foreach (['pairs', 'infos'] as $k) {
+                        $this->stats[$k] += $r[$k];
+                    }
+                    $this->stats['team'] += $r['team'];
+                    $this->stats['empty'] += $r['empty'];
+
+                    // Stand nur vorruecken, wenn die Nachrichten auch lesbar waren (sonst beim naechsten Mal erneut versuchen)
+                    $newest = $stopAt;
+                    if ($r['total'] === 0 || $r['empty'] < $r['total']) {
+                        foreach ($messages as $m) {
+                            if ($newest === null || (int) $m->id > (int) $newest) {
+                                $newest = $m->id;
+                            }
+                        }
+                    }
+                    $this->saveChannelState($channel, 'read', '', $newest, $r['total']);
+
+                    echo sprintf(
+                        "                  %d Nachrichten | %d vom Team | %d Fragen | %d Antworten gelernt | %d Infos gespeichert\n",
+                        $r['total'], $r['team'], $r['questions'], $r['pairs'], $r['infos']
+                    );
+                    if ($r['total'] > 0 && $r['empty'] === $r['total']) {
+                        echo "                  ACHTUNG: Alle Nachrichten ohne Text. Message Content Intent im Developer Portal aktivieren!\n";
+                    } elseif ($r['total'] >= 20 && $r['team'] === 0) {
+                        echo "                  Hinweis: Kein Teamler erkannt - TEAM_ROLE_IDS pruefen.\n";
+                    }
+                });
             }
-        );
+        )->then(null, function ($e) use ($channel, $name) {
+            $msg = is_object($e) && method_exists($e, 'getMessage') ? $e->getMessage() : (string) $e;
+            echo "  [Fehler]        #{$name}: {$msg}\n";
+            $this->stats['skipped']++;
+            $this->saveChannelState($channel, 'error', mb_substr($msg, 0, 250), null, 0);
+        });
     }
 
     /** @return PromiseInterface<Message[]> */
@@ -212,42 +276,67 @@ final class Crawler
 
     // ------------------------------------------------------------ Auswertung
 
-    /** @param Message[] $messages */
-    private function evaluate(Guild $guild, Channel $channel, array $messages): void
+    /**
+     * @param Message[] $messages
+     * @return array<string,int>
+     */
+    private function evaluate(Guild $guild, Channel $channel, array $messages): array
     {
+        $r = ['total' => count($messages), 'empty' => 0, 'team' => 0, 'questions' => 0, 'pairs' => 0, 'infos' => 0];
         usort($messages, fn($a, $b) => (int) $a->id <=> (int) $b->id);
 
         $openQuestions = []; // messageId => ['text'=>..., 'time'=>...]
-        $usedAsAnswer = [];
+
+        // Freigegebenes Wissens-Ticket: ALLE Nachrichten (auch Bot-Nachrichten/Embeds) sind Informationsquelle
+        $isSource = in_array($channel->id, $this->sourceAllow, true);
 
         foreach ($messages as $m) {
-            if ($m->author === null || $m->author->bot) {
+            if ($m->author === null || ($m->author->bot && !$isSource)) {
                 continue;
             }
             $text = $this->clean((string) $m->content);
+            if ($isSource) {
+                $text = trim($text . "\n" . $this->embedText($m));
+            }
             if ($text === '') {
+                $r['empty']++;
                 continue;
             }
             $time = $m->timestamp ? $m->timestamp->getTimestamp() : time();
 
-            if (!$this->isTeam($guild, $m->author->id)) {
-                if (Text::looksLikeQuestion($text, Text::normalize($text))) {
-                    $openQuestions[$m->id] = ['text' => $text, 'time' => $time];
-                }
+            $infoStored = false;
+            if ($isSource && mb_strlen($text) >= 20) {
+                $r['infos'] += $this->storeInfo($m, $channel, $text);
+                $infoStored = true;
+            }
+            if ($m->author->bot) {
                 continue;
             }
 
-            // Teamler-Nachricht: Antwort auf eine Frage?
+            if (!$this->isTeam($guild, $m->author->id)) {
+                if (Text::looksLikeQuestion($text, Text::normalize($text))) {
+                    $openQuestions[$m->id] = ['text' => $text, 'time' => $time];
+                    $r['questions']++;
+                }
+                continue;
+            }
+            $r['team']++;
+
+            // Teamler-Nachricht: Antwort auf eine Spielernachricht?
             $answered = false;
             $ref = $m->referenced_message;
-            if ($ref instanceof Message && $ref->author && !$ref->author->bot && !$this->isTeam($guild, $ref->author->id)) {
-                $q = $this->clean((string) $ref->content);
-                if ($q !== '' && Text::looksLikeQuestion($q, Text::normalize($q))) {
-                    $this->knowledge->learn($q, $text, $m->author->id, $channel->id, 'crawl');
-                    unset($openQuestions[$ref->id]);
-                    $answered = true;
+            if ($ref instanceof Message) {
+                // Direkte Antwort (Reply) auf eine Nachricht eines Spielers = Frage/Antwort-Paar
+                if ($ref->author && !$ref->author->bot && !$this->isTeam($guild, $ref->author->id)) {
+                    $q = $this->clean((string) $ref->content);
+                    if (mb_strlen($q) >= 6) {
+                        $this->knowledge->learn($q, $text, $m->author->id, $channel->id, 'crawl');
+                        unset($openQuestions[$ref->id]);
+                        $answered = true;
+                        $r['pairs']++;
+                    }
                 }
-            } elseif ($ref === null && $m->message_reference === null) {
+            } elseif ($m->message_reference === null) {
                 // Kein Reply: juengste offene Frage im Zeitfenster
                 $bestId = null;
                 foreach ($openQuestions as $id => $q) {
@@ -259,15 +348,90 @@ final class Crawler
                     $this->knowledge->learn($openQuestions[$bestId]['text'], $text, $m->author->id, $channel->id, 'crawl');
                     unset($openQuestions[$bestId]);
                     $answered = true;
+                    $r['pairs']++;
                 }
             }
 
             // Lange Team-Texte ohne Frage-Bezug = Info (Regeln, Ankuendigungen, FAQ)
-            if (!$answered && $ref === null && mb_strlen($text) >= 40) {
-                $created = $m->timestamp ? $m->timestamp->format('Y-m-d H:i:s') : date('Y-m-d H:i:s');
-                $this->knowledge->addInfo($m->id, $channel->id, (string) $channel->name, $text, $created);
+            if (!$infoStored && !$answered && $ref === null && mb_strlen($text) >= 40) {
+                $r['infos'] += $this->storeInfo($m, $channel, $text);
             }
         }
+        return $r;
+    }
+
+    /** Speichert einen Text in Abschnitten (max. ~700 Zeichen), damit der Bot gezielt den passenden Teil ausgeben kann. */
+    private function storeInfo(Message $m, Channel $channel, string $text): int
+    {
+        $created = $m->timestamp ? $m->timestamp->format('Y-m-d H:i:s') : date('Y-m-d H:i:s');
+        $n = 0;
+        foreach ($this->chunks($text, 700) as $i => $chunk) {
+            $this->knowledge->addInfo($i === 0 ? $m->id : $m->id . '-' . $i, $channel->id, (string) $channel->name, $chunk, $created);
+            $n++;
+        }
+        return $n;
+    }
+
+    /** @return string[] */
+    private function chunks(string $text, int $max): array
+    {
+        $out = [];
+        $cur = '';
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            foreach (explode("\n", wordwrap($line, $max, "\n", true)) as $part) {
+                if ($cur !== '' && mb_strlen($cur) + mb_strlen($part) + 1 > $max) {
+                    $out[] = $cur;
+                    $cur = '';
+                }
+                $cur .= ($cur === '' ? '' : "\n") . $part;
+            }
+        }
+        if ($cur !== '') {
+            $out[] = $cur;
+        }
+        return $out;
+    }
+
+    /** Text aus Embeds (z.B. von Ticket-Bots): Titel, Beschreibung und Felder. */
+    private function embedText(Message $m): string
+    {
+        $parts = [];
+        foreach ($m->embeds ?? [] as $e) {
+            foreach ([$e->title ?? '', $e->description ?? ''] as $t) {
+                if (trim((string) $t) !== '') {
+                    $parts[] = $this->clean((string) $t);
+                }
+            }
+            foreach ($e->fields ?? [] as $f) {
+                $line = trim(($f->name ?? '') . ': ' . ($f->value ?? ''), ': ');
+                if ($line !== '') {
+                    $parts[] = $this->clean($line);
+                }
+            }
+        }
+        return implode("\n", $parts);
+    }
+
+    /** Laedt Mitglieder, die noch nicht im Cache sind, einzeln per API - noetig, um Teamler sicher zu erkennen. */
+    private function ensureMembers(Guild $guild, array $ids): PromiseInterface
+    {
+        $chain = resolve(null);
+        foreach ($ids as $id) {
+            $id = (string) $id;
+            if (isset($this->unknownMembers[$id]) || $guild->members->get('id', $id) !== null) {
+                continue;
+            }
+            $chain = $chain->then(function () use ($guild, $id) {
+                return $guild->members->fetch($id)->then(null, function () use ($id) {
+                    $this->unknownMembers[$id] = true; // z.B. Server verlassen
+                });
+            });
+        }
+        return $chain;
     }
 
     private function isTeam(Guild $guild, string $userId): bool
@@ -288,7 +452,9 @@ final class Crawler
     private function clean(string $s): string
     {
         $s = preg_replace('/<@[!&]?\d+>/', '', $s) ?? $s;
-        return trim(preg_replace('/\s+/', ' ', $s) ?? $s);
+        $s = preg_replace('/[ \t]+/', ' ', $s) ?? $s;          // Zeilenumbrueche bleiben erhalten
+        $s = preg_replace('/\s*\n\s*/', "\n", $s) ?? $s;
+        return trim($s);
     }
 
     private function saveChannelState(Channel $channel, string $status, string $reason, ?string $newest, int $read): void

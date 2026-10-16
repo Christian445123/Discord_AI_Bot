@@ -18,10 +18,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($open > 0) {
             flash('Es läuft bzw. wartet bereits ein Update-Auftrag.');
         } else {
-            $pdo->prepare("INSERT INTO jobs (type, status, created_at) VALUES (?, 'pending', NOW())")->execute([$type]);
-            flash($action === 'check'
-                ? 'Prüfung angefordert. Der Bot führt sie innerhalb weniger Sekunden aus.'
-                : 'Update angefordert. Der Bot installiert es und startet danach neu.');
+            flash(dispatch_job($pdo, $type, $action === 'check' ? 'Update-Prüfung' : 'Update'));
         }
     }
     header('Location: updates.php');
@@ -43,7 +40,7 @@ echo '<h1>Updates von GitHub</h1>';
 
 echo '<div class="card"><p>Bot: ' . ($online
     ? '<b style="color:var(--ok)">online</b>'
-    : '<b style="color:var(--bad)">offline</b> <span class="mute">– Aufträge werden erst ausgeführt, wenn der Bot läuft (pm2)</span>') . '</p>';
+    : '<b style="color:var(--bad)">offline</b> <span class="mute">– das Panel führt Aufträge dann selbst aus</span>') . '</p>';
 
 if ($info) {
     $behind = (int) $info['behind'];
@@ -64,10 +61,10 @@ if ($info) {
 }
 
 echo '<div class="row" style="margin-top:14px;gap:10px"><form method="post" class="inline">' . csrf_field()
-    . '<input type="hidden" name="action" value="check"><button class="sec"' . ($busy || !$online ? ' disabled' : '') . '>Auf Updates prüfen</button></form>';
+    . '<input type="hidden" name="action" value="check"><button class="sec"' . ($busy ? ' disabled' : '') . '>Auf Updates prüfen</button></form>';
 if ($info && (int) $info['behind'] > 0) {
     echo '<form method="post" class="inline" onsubmit="return confirm(\'Update jetzt installieren? Der Bot wird dabei neu gestartet.\')">'
-        . csrf_field() . '<input type="hidden" name="action" value="apply"><button' . ($busy || !$online || !empty($info['dirty']) ? ' disabled' : '')
+        . csrf_field() . '<input type="hidden" name="action" value="apply"><button' . ($busy || !empty($info['dirty']) ? ' disabled' : '')
         . '>Update installieren</button></form>';
 }
 echo '</div>';

@@ -21,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash('Nicht gelöscht: Das Bestätigungswort LÖSCHEN wurde nicht korrekt eingegeben.');
         } else {
             $done = [];
-            $busy = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'crawl' AND status IN ('pending','running')")->fetchColumn();
+            $busy = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type IN ('crawl','crawl_full') AND status IN ('pending','running')")->fetchColumn();
             if ($busy > 0) {
                 flash('Nicht gelöscht: Es läuft gerade eine Durchsuchung. Bitte warten, bis sie beendet ist.');
                 header('Location: server_info.php');
@@ -41,15 +41,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             flash($done ? 'Gelöscht: ' . implode(', ', $done) . '.' : 'Nichts ausgewählt - es wurde nichts gelöscht.');
         }
-    } elseif ($action === 'crawl') {
-        // Das Panel startet nichts selbst, sondern legt einen Auftrag an; der dauerhaft laufende Bot (pm2) fuehrt ihn aus.
-        $open = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'crawl' AND status IN ('pending','running')")->fetchColumn();
-        if ($open > 0) {
-            flash('Es läuft bzw. wartet bereits eine Durchsuchung.');
-        } else {
-            $pdo->prepare("INSERT INTO jobs (type, status, created_at) VALUES ('crawl', 'pending', NOW())")->execute();
-            flash('Durchsuchung angefordert. Der Bot startet sie innerhalb weniger Sekunden.');
-        }
+    } elseif ($action === 'crawl' || $action === 'crawl_full') {
+        // Bot online: er fuehrt den Auftrag aus. Sonst startet das Panel die Durchsuchung selbst.
+        flash(dispatch_job($pdo, $action, $action === 'crawl' ? 'Durchsuchung' : 'Komplett neu einlesen'));
     }
     header('Location: server_info.php');
     exit;
@@ -81,14 +75,20 @@ echo '<h1>Server-Infos</h1>';
 echo '<div class="card"><h2>Server durchsuchen</h2>'
     . '<p class="mute">Liest die Verläufe der Channels und speichert Frage/Antwort-Paare und Team-Infos. '
     . 'Channels, die nur für das Team sichtbar sind, werden nicht gelesen.</p>'
-    . '<form method="post">' . csrf_field() . '<input type="hidden" name="action" value="crawl"><button>Durchsuchung starten</button></form>';
+    . '<div class="row" style="gap:10px"><form method="post" class="inline">' . csrf_field() . '<input type="hidden" name="action" value="crawl"><button>Durchsuchung starten</button></form>'
+    . '<form method="post" class="inline" onsubmit="return confirm(\'Alle Channels komplett von vorn einlesen? Das kann länger dauern.\')">' . csrf_field()
+    . '<input type="hidden" name="action" value="crawl_full"><button class="sec">Komplett neu einlesen</button></form></div>'
+    . '<p class="mute" style="margin-top:8px">„Durchsuchung starten“ liest nur neue Nachrichten. „Komplett neu einlesen“ liest alle Channels wieder von Anfang an.</p>';
 
 $hb = $pdo->query("SELECT updated_at FROM bot_status WHERE k = 'heartbeat'")->fetchColumn();
 $online = $hb && (time() - strtotime((string) $hb)) < 30;
-echo '<p class="mute" style="margin-top:12px">Bot: ' . ($online ? '<b style="color:var(--ok)">online</b>' : '<b style="color:var(--bad)">offline</b> - Aufträge werden erst ausgeführt, wenn der Bot läuft (pm2)') . '</p>';
+echo '<p class="mute" style="margin-top:12px">Bot: ' . ($online ? '<b style="color:var(--ok)">online</b>' : '<b style="color:var(--bad)">offline</b> - Aufträge führt dann das Panel selbst aus') . '</p>';
 
-$job = $pdo->query("SELECT * FROM jobs WHERE type = 'crawl' ORDER BY id DESC LIMIT 1")->fetch();
+$job = $pdo->query("SELECT * FROM jobs WHERE type IN ('crawl','crawl_full') ORDER BY id DESC LIMIT 1")->fetch();
 if ($job) {
+    if (in_array($job['status'], ['pending', 'running'], true)) {
+        echo '<meta http-equiv="refresh" content="5">'; // Status automatisch aktualisieren
+    }
     $label = ['pending' => 'wartet auf den Bot', 'running' => 'läuft', 'done' => 'abgeschlossen', 'failed' => 'fehlgeschlagen'][$job['status']] ?? $job['status'];
     echo '<p class="mute">Letzte Durchsuchung #' . (int) $job['id'] . ': <b>' . h($label) . '</b> · angefordert ' . h($job['created_at'])
         . ($job['finished_at'] ? ' · beendet ' . h($job['finished_at']) : '') . ($job['note'] ? ' · ' . h($job['note']) : '') . '</p>';

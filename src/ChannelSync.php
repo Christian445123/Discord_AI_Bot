@@ -40,6 +40,14 @@ final class ChannelSync
             if (!$isCategory && $teamRoles !== []) {
                 $reason = ChannelPolicy::autoReason($guild, $c, $teamRoles) ?? '';
             }
+            // Ticket-Kategorie: nur antworten, ausser dem freigegebenen Wissens-Ticket
+            if (!$isCategory) {
+                if (in_array($c->id, Env::list('ANSWER_SOURCE_CHANNEL_IDS'), true)) {
+                    $reason = '';
+                } elseif ($c->parent_id && in_array($c->parent_id, Env::list('ANSWER_ONLY_CATEGORY_IDS'), true)) {
+                    $reason = 'Ticket-Kategorie: nur Antworten, keine Wissensquelle';
+                }
+            }
             $parent = $c->parent_id ?: null;
             $st->execute([
                 $c->id,

@@ -8,15 +8,20 @@ use React\EventLoop\LoopInterface;
 /**
  * Wird im dauerhaft laufenden Bot (pm2) betrieben:
  *  - schreibt regelmaessig einen Heartbeat (Panel zeigt "Bot online"),
- *  - fuehrt vom Web-Panel angeforderte Auftraege aus (Server-Durchsuchung, GitHub-Update).
+ *  - fuehrt vom Web-Panel angeforderte Auftraege aus (Server-Durchsuchung, GitHub-Update ...),
+ *  - legt bei Bedarf automatisch Durchsuchungen an.
+ *
+ * Laeuft der Bot nicht, startet das Panel Auftraege selbst ueber run_job.php (siehe panel/bootstrap.php).
  */
 final class Jobs
 {
     private const TICK_SECONDS = 5;
 
     /** type => [script, args, logfile] */
-    private const SCRIPTS = [
+    public const SCRIPTS = [
         'crawl' => ['crawl.php', [], 'crawl.log'],
+        'crawl_full' => ['crawl.php', ['full'], 'crawl.log'],
+        'sync_channels' => ['sync.php', [], 'sync.log'],
         'update_check' => ['update.php', ['check'], 'update.log'],
         'update_apply' => ['update.php', ['apply'], 'update.log'],
     ];
@@ -25,7 +30,6 @@ final class Jobs
     private $proc = null;
     private ?int $runningId = null;
     private string $runningType = '';
-
     private int $ticks = 0;
     private int $startedAt;
 
@@ -41,29 +45,22 @@ final class Jobs
         $this->startedAt = time();
     }
 
-    /** Legt automatisch eine Durchsuchung an, wenn das Intervall abgelaufen ist. */
-    private function autoCrawl(): void
+    /**
+     * Bewertet das Ende eines Auftragsskripts.
+     *
+     * @return array{0:bool,1:string,2:bool} [erfolgreich, Notiz, Bot-Neustart noetig]
+     */
+    public static function outcome(string $type, int $code): array
     {
-        if (!$this->settings->bool('CRAWL_AUTO_ENABLED', false)) {
-            return;
+        if ($type === 'update_apply') {
+            return match ($code) {
+                0 => [true, 'Update installiert', true],
+                10 => [true, 'Bereits aktuell', false],
+                2 => [false, 'Lokale Änderungen im Projektordner - Update abgebrochen', false],
+                default => [false, 'Exit-Code ' . $code, false],
+            };
         }
-        $hours = max(1, $this->settings->int('CRAWL_INTERVAL_HOURS', 24));
-        $pdo = $this->db->pdo();
-
-        $open = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'crawl' AND status IN ('pending','running')")->fetchColumn();
-        if ($open > 0) {
-            return;
-        }
-        $last = $pdo->query("SELECT MAX(created_at) FROM jobs WHERE type = 'crawl'")->fetchColumn();
-        if ($last && time() - strtotime((string) $last) < $hours * 3600) {
-            return;
-        }
-        // Erste automatische Durchsuchung erst 2 Minuten nach dem Bot-Start
-        if (!$last && time() - $this->startedAt < 120) {
-            return;
-        }
-        $pdo->exec("INSERT INTO jobs (type, status, note, created_at) VALUES ('crawl', 'pending', 'automatisch', NOW())");
-        echo "[Jobs] Automatische Durchsuchung angelegt (Intervall {$hours} h)\n";
+        return [$code === 0, 'Exit-Code ' . $code, false];
     }
 
     public function start(): void
@@ -80,6 +77,31 @@ final class Jobs
                 echo '[Jobs] ' . $e->getMessage() . "\n";
             }
         });
+    }
+
+    /** Legt automatisch eine Durchsuchung an, wenn das Intervall abgelaufen ist. */
+    private function autoCrawl(): void
+    {
+        if (!$this->settings->bool('CRAWL_AUTO_ENABLED', false)) {
+            return;
+        }
+        $hours = max(1, $this->settings->int('CRAWL_INTERVAL_HOURS', 24));
+        $pdo = $this->db->pdo();
+
+        $open = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type IN ('crawl','crawl_full') AND status IN ('pending','running')")->fetchColumn();
+        if ($open > 0) {
+            return;
+        }
+        $last = $pdo->query("SELECT MAX(created_at) FROM jobs WHERE type IN ('crawl','crawl_full')")->fetchColumn();
+        if ($last && time() - strtotime((string) $last) < $hours * 3600) {
+            return;
+        }
+        // Erste automatische Durchsuchung erst 2 Minuten nach dem Bot-Start
+        if (!$last && time() - $this->startedAt < 120) {
+            return;
+        }
+        $pdo->exec("INSERT INTO jobs (type, status, note, created_at) VALUES ('crawl', 'pending', 'automatisch', NOW())");
+        echo "[Jobs] Automatische Durchsuchung angelegt (Intervall {$hours} h)\n";
     }
 
     private function tick(): void
@@ -105,15 +127,23 @@ final class Jobs
             return;
         }
         $id = (int) $row['id'];
-        if (isset(self::SCRIPTS[$row['type']])) {
-            $this->startScript($id, $row['type']);
-        } elseif (isset($this->handlers[$row['type']])) {
-            $note = ($this->handlers[$row['type']])();
-            $pdo->prepare("UPDATE jobs SET status = 'done', started_at = NOW(), finished_at = NOW(), note = ? WHERE id = ?")
+        $type = (string) $row['type'];
+
+        if (isset($this->handlers[$type])) {
+            if (!$this->claim($id)) {
+                return;
+            }
+            $note = ($this->handlers[$type])();
+            $pdo->prepare("UPDATE jobs SET status = 'done', finished_at = NOW(), note = ? WHERE id = ?")
                 ->execute([mb_substr($note, 0, 250), $id]);
-        } elseif ($row['type'] === 'restart') {
+        } elseif (isset(self::SCRIPTS[$type])) {
+            $this->startScript($id, $type);
+        } elseif ($type === 'restart') {
+            if (!$this->claim($id)) {
+                return;
+            }
             if (getenv('pm_id') !== false) {
-                $pdo->prepare("UPDATE jobs SET status = 'done', started_at = NOW(), finished_at = NOW(), note = ? WHERE id = ?")
+                $pdo->prepare("UPDATE jobs SET status = 'done', finished_at = NOW(), note = ? WHERE id = ?")
                     ->execute(['Neustart ausgelöst', $id]);
                 echo "[Jobs] Neustart aus dem Panel angefordert\n";
                 $this->loop->addTimer(2, fn() => exit(0));
@@ -123,8 +153,16 @@ final class Jobs
             }
         } else {
             $pdo->prepare("UPDATE jobs SET status = 'failed', finished_at = NOW(), note = 'Unbekannter Auftrag' WHERE id = ?")
-                ->execute([$row['id']]);
+                ->execute([$id]);
         }
+    }
+
+    /** Auftrag atomar uebernehmen (verhindert Doppelausfuehrung, falls das Panel ihn gleichzeitig startet). */
+    private function claim(int $id): bool
+    {
+        $st = $this->db->pdo()->prepare("UPDATE jobs SET status = 'running', started_at = NOW() WHERE id = ? AND status = 'pending'");
+        $st->execute([$id]);
+        return $st->rowCount() === 1;
     }
 
     private function checkRunning(): void
@@ -137,46 +175,34 @@ final class Jobs
         proc_close($this->proc);
         $this->proc = null;
 
-        $id = $this->runningId;
+        $id = (int) $this->runningId;
         $type = $this->runningType;
         $this->runningId = null;
         $this->runningType = '';
 
-        $ok = $code === 0;
-        $note = 'Exit-Code ' . $code;
-        $restart = false;
+        [$ok, $note, $restart] = self::outcome($type, $code);
 
-        if ($type === 'update_apply') {
-            if ($code === 0) {
-                $note = 'Update installiert';
-                $restart = true;
-            } elseif ($code === 10) {
-                $ok = true;
-                $note = 'Bereits aktuell';
-            } elseif ($code === 2) {
-                $note = 'Lokale Änderungen im Projektordner - Update abgebrochen';
-            }
+        // Nach einem Update neu starten - pm2 startet den Bot automatisch mit dem neuen Code.
+        $canRestart = $restart && getenv('pm_id') !== false;
+        if ($restart && !$canRestart) {
+            $note = 'Update installiert - Bot bitte manuell neu starten';
         }
 
         $this->db->pdo()->prepare('UPDATE jobs SET status = ?, finished_at = NOW(), note = ? WHERE id = ?')
             ->execute([$ok ? 'done' : 'failed', $note, $id]);
         echo "[Jobs] Auftrag #{$id} ({$type}) beendet: {$note}\n";
 
-        // Nach einem Update neu starten - pm2 startet den Bot automatisch mit dem neuen Code.
-        if ($restart) {
-            if (getenv('pm_id') !== false) {
-                echo "[Jobs] Starte neu, um das Update zu laden ...\n";
-                $this->loop->addTimer(2, fn() => exit(0));
-            } else {
-                echo "[Jobs] Update installiert. Bitte den Bot manuell neu starten (kein pm2 erkannt).\n";
-                $this->db->pdo()->prepare('UPDATE jobs SET note = ? WHERE id = ?')
-                    ->execute(['Update installiert - Bot bitte manuell neu starten', $id]);
-            }
+        if ($canRestart) {
+            echo "[Jobs] Starte neu, um das Update zu laden ...\n";
+            $this->loop->addTimer(2, fn() => exit(0));
         }
     }
 
     private function startScript(int $id, string $type): void
     {
+        if (!$this->claim($id)) {
+            return; // vom Panel bereits uebernommen
+        }
         [$script, $args, $logName] = self::SCRIPTS[$type];
         $root = dirname(__DIR__);
         $log = $root . DIRECTORY_SEPARATOR . $logName;
@@ -188,9 +214,8 @@ final class Jobs
             $pipes,
             $root
         );
-        $pdo = $this->db->pdo();
         if (!is_resource($proc)) {
-            $pdo->prepare("UPDATE jobs SET status = 'failed', finished_at = NOW(), note = ? WHERE id = ?")
+            $this->db->pdo()->prepare("UPDATE jobs SET status = 'failed', finished_at = NOW(), note = ? WHERE id = ?")
                 ->execute(['Prozess konnte nicht gestartet werden', $id]);
             echo "[Jobs] Auftrag #{$id} ({$type}) konnte nicht gestartet werden\n";
             return;
@@ -198,7 +223,6 @@ final class Jobs
         $this->proc = $proc;
         $this->runningId = $id;
         $this->runningType = $type;
-        $pdo->prepare("UPDATE jobs SET status = 'running', started_at = NOW() WHERE id = ?")->execute([$id]);
         echo "[Jobs] Auftrag #{$id} ({$type}) gestartet\n";
     }
 }

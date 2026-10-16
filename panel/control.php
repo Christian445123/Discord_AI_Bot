@@ -22,12 +22,13 @@ $toggles = [
 /** Aktionen, die vom Bot ausgefuehrt werden. */
 $actions = [
     'crawl' => ['Server jetzt durchsuchen', 'Liest die Channel-Verläufe und speichert Wissen.'],
+    'crawl_full' => ['Komplett neu einlesen', 'Liest alle Channels wieder von Anfang an (statt nur neue Nachrichten).'],
     'sync_channels' => ['Channels synchronisieren', 'Aktualisiert die Kategorie-/Channel-Liste im Panel.'],
     'update_check' => ['Auf Updates prüfen', 'Holt den Stand von GitHub (Installation unter „Updates“).'],
     'restart' => ['Bot neu starten', 'Startet den Bot neu (pm2 startet ihn sofort wieder).'],
 ];
 $typeLabels = [
-    'crawl' => 'Server durchsuchen', 'sync_channels' => 'Channels synchronisieren', 'update_check' => 'Update-Prüfung',
+    'crawl' => 'Server durchsuchen', 'crawl_full' => 'Komplett neu einlesen', 'sync_channels' => 'Channels synchronisieren', 'update_check' => 'Update-Prüfung',
     'update_apply' => 'Update installieren', 'restart' => 'Neustart',
 ];
 
@@ -53,14 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $up->execute(['CRAWL_INTERVAL_HOURS', (string) $hours]);
         flash('Gespeichert. Die Einstellungen gelten im Bot innerhalb weniger Sekunden.');
     } elseif (isset($actions[$action])) {
-        $open = $pdo->prepare("SELECT COUNT(*) FROM jobs WHERE type = ? AND status IN ('pending','running')");
-        $open->execute([$action]);
-        if ((int) $open->fetchColumn() > 0) {
-            flash('Dieser Auftrag läuft bzw. wartet bereits.');
-        } else {
-            $pdo->prepare("INSERT INTO jobs (type, status, created_at) VALUES (?, 'pending', NOW())")->execute([$action]);
-            flash('Auftrag „' . $actions[$action][0] . '“ angelegt. Der Bot führt ihn innerhalb weniger Sekunden aus.');
-        }
+        flash(dispatch_job($pdo, $action, $actions[$action][0]));
     }
     header('Location: control.php');
     exit;
@@ -85,7 +79,7 @@ if ($hasOpen) {
 
 echo '<div class="card"><p style="margin:0">Bot: ' . ($online
     ? '<b style="color:var(--ok)">online</b>'
-    : '<b style="color:var(--bad)">offline</b> <span class="mute">– Aufträge werden erst ausgeführt, wenn der Bot läuft (pm2)</span>') . '</p></div>';
+    : '<b style="color:var(--bad)">offline</b> <span class="mute">– Aufträge führt dann das Panel selbst aus (Neustart nur mit pm2)</span>') . '</p></div>';
 
 // Funktionen starten
 echo '<div class="card"><h2>Funktionen starten</h2><div class="grid" style="margin:0">';
@@ -93,7 +87,7 @@ foreach ($actions as $key => [$label, $desc]) {
     $confirm = $key === 'restart' ? ' onsubmit="return confirm(\'Bot wirklich neu starten?\')"' : '';
     echo '<form method="post" class="card" style="margin:0"' . $confirm . '>' . csrf_field()
         . '<input type="hidden" name="action" value="' . h($key) . '"><b>' . h($label) . '</b>'
-        . '<p class="mute" style="margin:6px 0 12px">' . h($desc) . '</p><button' . ($online ? '' : ' disabled') . '>Starten</button></form>';
+        . '<p class="mute" style="margin:6px 0 12px">' . h($desc) . '</p><button' . ($online || $key !== 'restart' ? '' : ' disabled') . '>Starten</button></form>';
 }
 echo '</div><p class="mute" style="margin-bottom:0">Update installieren, Channels ausnehmen und Löschen: siehe '
     . '<a href="updates.php">Updates</a>, <a href="channels.php">Channels</a>, <a href="server_info.php">Server-Infos</a>.</p></div>';

@@ -107,6 +107,119 @@ function env_update(array $values): void
     file_put_contents($path, implode(PHP_EOL, $lines) . PHP_EOL, LOCK_EX);
 }
 
+function bot_online(PDO $pdo): bool
+{
+    $hb = $pdo->query("SELECT updated_at FROM bot_status WHERE k = 'heartbeat'")->fetchColumn();
+    return $hb && (time() - strtotime((string) $hb)) < 30;
+}
+
+/** PHP-CLI-Programm finden (unter FPM/Apache zeigt PHP_BINARY nicht auf "php"). */
+function php_cli(): string
+{
+    $env = Env::get('PHP_CLI');
+    if ($env !== '') {
+        return $env;
+    }
+    $base = strtolower(basename(PHP_BINARY));
+    if (preg_match('/^php\d*(\.\d+)?(\.exe)?$/', $base)) {
+        return PHP_BINARY;
+    }
+    foreach ([PHP_BINDIR . '/php', PHP_BINDIR . '/php.exe', '/usr/bin/php', '/usr/local/bin/php'] as $c) {
+        if (is_file($c) && is_executable($c)) {
+            return $c;
+        }
+    }
+    return 'php';
+}
+
+function fn_enabled(string $name): bool
+{
+    $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+    return function_exists($name) && !in_array($name, $disabled, true);
+}
+
+/** Startet ein PHP-Skript des Projekts losgeloest im Hintergrund. Liefert eine Fehlermeldung oder null. */
+function spawn_detached(string $script, array $args, string $log): ?string
+{
+    $root = dirname(__DIR__);
+    $cmd = implode(' ', array_map('escapeshellarg', array_merge([php_cli(), $root . DIRECTORY_SEPARATOR . $script], $args)));
+
+    if (stripos(PHP_OS_FAMILY, 'Windows') === 0) {
+        if (!fn_enabled('popen')) {
+            return 'popen ist in der php.ini gesperrt (disable_functions)';
+        }
+        $h = @popen('start /B "" ' . $cmd . ' > ' . escapeshellarg($log) . ' 2>&1', 'r');
+        if ($h === false) {
+            return 'Prozess konnte nicht gestartet werden';
+        }
+        pclose($h);
+        return null;
+    }
+
+    $full = 'cd ' . escapeshellarg($root) . ' && nohup ' . $cmd . ' > ' . escapeshellarg($log) . ' 2>&1 &';
+    foreach (['exec', 'shell_exec', 'system', 'passthru'] as $fn) {
+        if (fn_enabled($fn)) {
+            $fn === 'exec' ? exec($full) : $fn($full);
+            return null;
+        }
+    }
+    if (fn_enabled('proc_open')) {
+        $p = @proc_open(['sh', '-c', $full], [], $pipes);
+        if (is_resource($p)) {
+            return null;
+        }
+    }
+    return 'Programme starten ist in der php.ini gesperrt (disable_functions: exec, shell_exec, system, passthru, proc_open). '
+        . 'Dort freigeben oder den Bot per pm2 laufen lassen.';
+}
+
+/**
+ * Legt einen Auftrag an. Laeuft der Bot, fuehrt er ihn aus; sonst startet das Panel ihn selbst.
+ * Liefert die Meldung fuer den Benutzer.
+ */
+function dispatch_job(PDO $pdo, string $type, string $label): string
+{
+    $same = str_starts_with($type, 'crawl') ? ['crawl', 'crawl_full'] : [$type];
+    $in = implode(',', array_fill(0, count($same), '?'));
+    $open = $pdo->prepare("SELECT COUNT(*) FROM jobs WHERE type IN ($in) AND status IN ('pending','running')");
+    $open->execute($same);
+    if ((int) $open->fetchColumn() > 0) {
+        return "„{$label}“ läuft bzw. wartet bereits.";
+    }
+    $pdo->prepare("INSERT INTO jobs (type, status, created_at) VALUES (?, 'pending', NOW())")->execute([$type]);
+    $id = (int) $pdo->lastInsertId();
+
+    if (bot_online($pdo) || !isset(App\Jobs::SCRIPTS[$type])) {
+        return "„{$label}“ angefordert. Der Bot startet es innerhalb weniger Sekunden.";
+    }
+    $err = spawn_detached('run_job.php', [(string) $id], dirname(__DIR__) . '/jobrunner.log');
+    if ($err !== null) {
+        $pdo->prepare("UPDATE jobs SET status = 'failed', finished_at = NOW(), note = ? WHERE id = ?")->execute([mb_substr($err, 0, 250), $id]);
+        return "„{$label}“ konnte nicht gestartet werden: {$err}";
+    }
+    return "„{$label}“ gestartet. (Der Bot ist offline - das Panel führt den Auftrag direkt aus.)";
+}
+
+/** Auftraege, die der Bot nach 20 s nicht uebernommen hat, startet das Panel selbst. */
+function rescue_stale_jobs(PDO $pdo): void
+{
+    try {
+        $rows = $pdo->query("SELECT id, type FROM jobs WHERE status = 'pending' AND created_at < NOW() - INTERVAL 20 SECOND")->fetchAll();
+        foreach ($rows as $r) {
+            if (!isset(App\Jobs::SCRIPTS[$r['type']])) {
+                continue;
+            }
+            $err = spawn_detached('run_job.php', [(string) $r['id']], dirname(__DIR__) . '/jobrunner.log');
+            if ($err !== null) {
+                $pdo->prepare("UPDATE jobs SET status = 'failed', finished_at = NOW(), note = ? WHERE id = ? AND status = 'pending'")
+                    ->execute([mb_substr($err, 0, 250), $r['id']]);
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('rescue_stale_jobs: ' . $e->getMessage());
+    }
+}
+
 function page_header(string $title, string $active = ''): void
 {
     $nav = [
@@ -147,6 +260,7 @@ function page_header(string $title, string $active = ''): void
     }
     echo '<main>';
     if (logged_in()) {
+        rescue_stale_jobs(db());
         try {
             $tm = db()->query("SELECT v FROM settings WHERE k = 'TEST_MODE'")->fetchColumn();
             if (strtolower((string) $tm) === 'true') {

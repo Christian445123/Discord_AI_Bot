@@ -16,11 +16,19 @@ final class Bot
     private Knowledge $knowledge;
     private Moderator $moderator;
     private Settings $settings;
+    private bool $noLearn = false;
+    /** @var string[] */
+    private array $excludedIds = [];
+    private int $excludedLoaded = 0;
 
     /** @var string[] */
     private array $teamRoles;
     /** @var string[] */
     private array $questionChannels;
+    /** @var string[] Kategorien (z.B. Tickets), in denen der Bot nur antwortet und nichts lernt */
+    private array $answerOnlyCategories;
+    /** @var string[] Channels, in denen auf jede Nachricht geantwortet wird */
+    private array $alwaysChannels;
     /** @var string[] */
     private array $moderationIgnore;
 
@@ -38,6 +46,8 @@ final class Bot
 
         $this->teamRoles = Env::list('TEAM_ROLE_IDS');
         $this->questionChannels = Env::list('QUESTION_CHANNEL_IDS');
+        $this->answerOnlyCategories = Env::list("ANSWER_ONLY_CATEGORY_IDS");
+        $this->alwaysChannels = Env::list("ALWAYS_ANSWER_CHANNEL_IDS");
         $this->moderationIgnore = Env::list('MODERATION_IGNORE_CHANNEL_IDS');
 
         $this->discord = new Discord([
@@ -111,7 +121,18 @@ final class Bot
     /** Lernt nur, wenn das Lernen im Panel aktiviert ist (und nie aus Testnachrichten). */
     private function learn(string $question, string $answer, string $userId, string $channelId): void
     {
+        if ($this->noLearn) {
+            return;
+        }
         if ($this->testMode() || !$this->settings->bool('LEARNING_ENABLED', true)) {
+            return;
+        }
+        // Nichts aus ausgenommenen Channels / Kategorien / Team-Channels lernen (Liste kurz zwischenspeichern)
+        if (time() - $this->excludedLoaded > 30) {
+            $this->excludedIds = Exclusions::channelIds($this->db->pdo());
+            $this->excludedLoaded = time();
+        }
+        if (in_array($channelId, $this->excludedIds, true)) {
             return;
         }
         $this->knowledge->learn($question, $answer, $userId, $channelId);
@@ -139,6 +160,7 @@ final class Bot
 
     private function handleTeamMessage(Message $m): void
     {
+        $this->noLearn = $this->isAnswerOnlyCategory($this->parentOf($m)); // Tickets: nur antworten, nichts lernen
         $text = trim($m->content);
         if ($text === '') {
             return;
@@ -190,12 +212,21 @@ final class Bot
     {
         $this->observeChannel($m);
 
-        if (!$this->inQuestionChannel($m->channel_id)) {
+        $parentId = $this->parentOf($m);
+        if (!$this->inQuestionChannel($m->channel_id, $parentId)) {
             return;
         }
         $norm = Text::normalize($m->content);
-        if (!Text::looksLikeQuestion($m->content, $norm)) {
+        // Support-Chat und Tickets: auf jede Nachricht antworten; sonst nur auf Fragen
+        $always = in_array($m->channel_id, $this->alwaysChannels, true) || $this->isAnswerOnlyCategory($parentId);
+        if ($always ? mb_strlen(trim($m->content)) < 10 : !Text::looksLikeQuestion($m->content, $norm)) {
             return;
+        }
+        // Pro Person und Channel nur eine offene Antwort gleichzeitig
+        foreach ($this->pending as $p) {
+            if ($p["channel"] === $m->channel_id && $p["user"] === $m->author->id) {
+                return;
+            }
         }
 
         if (!$this->settings->bool('ANSWERS_ENABLED', true)) {
@@ -212,6 +243,7 @@ final class Bot
         $this->pending[$m->id] = [
             'channel' => $m->channel_id,
             'user' => $m->author->id,
+            'priority' => $always || in_array($m->channel_id, $this->questionChannels, true),
             'text' => $m->content,
             'time' => time(),
             'timer' => $timer,
@@ -261,7 +293,7 @@ final class Bot
             return;
         }
 
-        if ($this->settings->bool('FALLBACK_ENABLED', true)) {
+        if ($this->settings->bool('FALLBACK_ENABLED', true) || !empty($q['priority'])) {
             $reply = $sie
                 ? "Hallo {$name}, vielen Dank für Ihre Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied wird sich so bald wie möglich bei Ihnen melden. Wir bitten um etwas Geduld."
                 : "Hallo {$name}, danke für deine Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied meldet sich so bald wie möglich bei dir. Bitte hab noch etwas Geduld.";
@@ -291,9 +323,22 @@ final class Bot
         $this->botAnswers = array_filter($this->botAnswers, fn($a) => $a['time'] >= $cut);
     }
 
-    private function inQuestionChannel(string $channelId): bool
+    private function inQuestionChannel(string $channelId, string $parentId = ""): bool
     {
+        if ($this->isAnswerOnlyCategory($parentId)) {
+            return true; // Tickets: immer antworten
+        }
         return $this->questionChannels === [] || in_array($channelId, $this->questionChannels, true);
+    }
+
+    private function isAnswerOnlyCategory(string $parentId): bool
+    {
+        return $parentId !== "" && in_array($parentId, $this->answerOnlyCategories, true);
+    }
+
+    private function parentOf(Message $m): string
+    {
+        return (string) ($m->channel->parent_id ?? "");
     }
 
     // ------------------------------------------------------------------ Channel-Überwachung
