@@ -226,7 +226,7 @@ final class Crawler
                         "                  %d Nachrichten | %d vom Team | %d Fragen | %d Antworten gelernt | %d Infos gespeichert\n",
                         $r['total'], $r['team'], $r['questions'], $r['pairs'], $r['infos']
                     );
-                    if ($r['total'] > 0 && $r['empty'] === $r['total']) {
+                    if ($r['total'] >= 20 && $r['empty'] === $r['total']) {
                         echo "                  ACHTUNG: Alle Nachrichten ohne Text. Message Content Intent im Developer Portal aktivieren!\n";
                     } elseif ($r['total'] >= 20 && $r['team'] === 0) {
                         echo "                  Hinweis: Kein Teamler erkannt - TEAM_ROLE_IDS pruefen.\n";
@@ -422,7 +422,9 @@ final class Crawler
         $parts = [];
         try {
             // Embeds in ein einfaches Array umwandeln - unabhaengig davon, ob die Bibliothek Objekte oder Arrays liefert
-            $embeds = json_decode((string) json_encode($m->embeds ?? []), true);
+            // Rohdaten der Nachricht verwenden: die Embed-Objekte der Bibliothek werfen bei manchen Embeds einen Fehler
+            $raw = method_exists($m, 'getRawAttributes') ? $m->getRawAttributes() : [];
+            $embeds = json_decode((string) json_encode($raw['embeds'] ?? []), true);
             foreach (is_array($embeds) ? $embeds : [] as $e) {
                 if (!is_array($e)) {
                     continue;
