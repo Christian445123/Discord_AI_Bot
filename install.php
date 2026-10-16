@@ -504,6 +504,11 @@ if ($cfg['TEAM_ROLE_IDS'] !== '') {
 
 if ($pm2) {
     if (askYesNo('Bot (inkl. Web-Panel) jetzt dauerhaft mit pm2 starten?', true)) {
+        // Zugangsdaten nicht in die pm2-Umgebung vererben (der Bot liest sie aus der .env)
+        foreach ($cfg as $k => $v) {
+            putenv($k);
+            unset($_ENV[$k]);
+        }
         step('Entferne ein altes, separates Panel-Programm aus pm2 (falls vorhanden)');
         run('pm2 delete discord-ai-panel');
         step('Starte Bot und Panel mit pm2 (ecosystem.config.js)');

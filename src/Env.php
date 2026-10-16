@@ -6,13 +6,14 @@ namespace App;
 final class Env
 {
     /**
-     * Laedt die .env. Schlaegt der strenge Dotenv-Parser fehl (z.B. Wert mit Leerzeichen ohne Anfuehrungszeichen),
+     * Laedt die .env. Werte aus der .env haben Vorrang vor Umgebungsvariablen
+     * (z.B. von pm2 gespeichert) - so gilt immer, was in der .env steht. Schlaegt der strenge Dotenv-Parser fehl (z.B. Wert mit Leerzeichen ohne Anfuehrungszeichen),
      * wird die Datei tolerant eingelesen, statt dass der Bot nicht mehr startet.
      */
     public static function load(string $dir): void
     {
         try {
-            \Dotenv\Dotenv::createImmutable($dir)->safeLoad();
+            \Dotenv\Dotenv::createMutable($dir)->safeLoad();
             return;
         } catch (\Throwable $e) {
             fwrite(STDERR, '[Env] Warnung: .env enthaelt einen Fehler (' . $e->getMessage()
@@ -31,7 +32,7 @@ final class Env
             if (strlen($v) >= 2 && ($v[0] === '"' || $v[0] === "'") && substr($v, -1) === $v[0]) {
                 $v = stripcslashes(substr($v, 1, -1));
             }
-            if ($k !== '' && !isset($_ENV[$k])) {
+            if ($k !== "") {
                 $_ENV[$k] = $v;
                 putenv("$k=$v");
             }
