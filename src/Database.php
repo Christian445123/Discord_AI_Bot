@@ -94,6 +94,13 @@ final class Database
             updated_at DATETIME NOT NULL
         ) CHARACTER SET utf8mb4');
 
+        $this->pdo->exec('CREATE TABLE IF NOT EXISTS ticket_state (
+            channel_id VARCHAR(32) PRIMARY KEY,
+            muted TINYINT(1) NOT NULL DEFAULT 0,
+            changed_by VARCHAR(32) NOT NULL DEFAULT \'\',
+            updated_at DATETIME NOT NULL
+        ) CHARACTER SET utf8mb4');
+
         $this->pdo->exec('CREATE TABLE IF NOT EXISTS jobs (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             type VARCHAR(32) NOT NULL,

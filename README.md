@@ -72,6 +72,13 @@ leer = erste Rolle aus `TEAM_ROLE_IDS`). Antwortet ein Teamler auf diese Nachric
 Der Bot wartet `ANSWER_DELAY_SECONDS`, ob ein Teamler zuerst antwortet; in diesen Channels erscheint bei unbekannter Frage
 immer der freundliche Hinweis. Änderungen an diesen Werten brauchen einen Bot-Neustart (`pm2 restart discord-ai-bot`).
 
+## Tickets: Bot an/aus
+
+In Tickets (Kategorie aus `ANSWER_ONLY_CATEGORY_IDS`) beantwortet der Bot die Fragen des Spielers nach `TICKET_ANSWER_DELAY_SECONDS`
+(Standard 8 s). **Sobald ein Teamler im Ticket schreibt, schweigt der Bot dort.** Ein Teamler setzt ihn mit `!bot an` wieder
+ein (und mit `!bot aus` aus). Der Zustand wird pro Ticket gespeichert und übersteht Neustarts. Im Testmodus werden Teamler wie Spieler
+behandelt, der Bot schweigt dann nicht.
+
 ## Steuerung im Panel
 
 Unter **Steuerung** startest du alle Funktionen per Klick (Server durchsuchen, Channels synchronisieren, Update-Prüfung,

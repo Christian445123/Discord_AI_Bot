@@ -17,6 +17,10 @@ final class Bot
     private Moderator $moderator;
     private Settings $settings;
     private bool $noLearn = false;
+    /** @var array<string,bool> */
+    private array $ticketCache = [];
+    /** @var array<string,int> */
+    private array $ticketCacheTime = [];
     /** @var string[] */
     private array $excludedIds = [];
     private int $excludedLoaded = 0;
@@ -102,6 +106,9 @@ final class Bot
 
             if ($this->isTeam($m)) {
                 $this->trace($m, "Nachricht von einem Teamler - der Bot antwortet Teamlern nur im Testmodus (Panel > Steuerung)");
+                if ($this->isTicketChannel($m) && $this->handleTicketTeamMessage($m)) {
+                    return;
+                }
                 $this->handleTeamMessage($m);
                 return;
             }
@@ -110,6 +117,67 @@ final class Bot
         } catch (\Throwable $e) {
             echo '[Fehler] ' . $e->getMessage() . "\n";
         }
+    }
+
+    // ------------------------------------------------------------------ Tickets: Bot an/aus pro Ticket
+
+    private function isTicketChannel(Message $m): bool
+    {
+        return $this->isAnswerOnlyCategory($this->parentOf($m));
+    }
+
+    /** Ist der Bot in diesem Ticket stummgeschaltet (weil ein Teamler uebernommen hat)? */
+    private function ticketMuted(string $channelId): bool
+    {
+        if (time() - ($this->ticketCacheTime[$channelId] ?? 0) > 5) {
+            $st = $this->db->pdo()->prepare('SELECT muted FROM ticket_state WHERE channel_id = ?');
+            $st->execute([$channelId]);
+            $this->ticketCache[$channelId] = (bool) $st->fetchColumn();
+            $this->ticketCacheTime[$channelId] = time();
+        }
+        return $this->ticketCache[$channelId];
+    }
+
+    private function setTicketMuted(string $channelId, bool $muted, string $by): void
+    {
+        $this->db->pdo()->prepare(
+            'INSERT INTO ticket_state (channel_id, muted, changed_by, updated_at) VALUES (?,?,?,NOW())
+             ON DUPLICATE KEY UPDATE muted = VALUES(muted), changed_by = VALUES(changed_by), updated_at = NOW()'
+        )->execute([$channelId, $muted ? 1 : 0, $by]);
+        $this->ticketCache[$channelId] = $muted;
+        $this->ticketCacheTime[$channelId] = time();
+    }
+
+    /**
+     * Teamler-Nachricht in einem Ticket: Befehle "!bot an" / "!bot aus", sonst uebernimmt der Teamler
+     * und der Bot schweigt in diesem Ticket, bis ein Teamler ihn mit "!bot an" wieder einsetzt.
+     *
+     * @return bool true, wenn die Nachricht ein Befehl war
+     */
+    private function handleTicketTeamMessage(Message $m): bool
+    {
+        if (preg_match('/^\s*!(?:bot|ki)\s*(an|ein|on|aus|off)?\s*$/iu', (string) $m->content, $mm)) {
+            $arg = strtolower($mm[1] ?? 'an');
+            $on = in_array($arg, ['an', 'ein', 'on'], true);
+            $this->setTicketMuted($m->channel_id, !$on, $m->author->id);
+            $m->reply($this->tag($on
+                ? 'Der Bot ist in diesem Ticket wieder aktiv und beantwortet Fragen.'
+                : 'Der Bot ist in diesem Ticket ausgeschaltet. Mit !bot an kann er wieder eingesetzt werden.'));
+            $this->trace($m, $on ? 'Teamler hat den Bot in diesem Ticket eingeschaltet' : 'Teamler hat den Bot in diesem Ticket ausgeschaltet');
+            return true;
+        }
+
+        if (!$this->ticketMuted($m->channel_id)) {
+            $this->setTicketMuted($m->channel_id, true, $m->author->id);
+            $this->trace($m, 'Teamler hat das Ticket uebernommen - Bot schweigt hier (wieder aktivieren mit !bot an)');
+        }
+        // laufende Antworten in diesem Ticket abbrechen
+        foreach ($this->pending as $id => $p) {
+            if ($p['channel'] === $m->channel_id) {
+                $this->cancelPending((string) $id);
+            }
+        }
+        return false;
     }
 
     /** Diagnose im Log: warum antwortet der Bot (nicht)? Nur in Antwort-Channels. Abschaltbar mit ANSWER_DEBUG=false. */
@@ -309,6 +377,10 @@ final class Bot
         $this->observeChannel($m);
 
         $parentId = $this->parentOf($m);
+        if ($this->isAnswerOnlyCategory($parentId) && $this->ticketMuted($m->channel_id)) {
+            $this->trace($m, "Ticket wird von einem Teamler betreut - Bot schweigt (wieder aktivieren: Teamler schreibt !bot an)");
+            return;
+        }
         if (!$this->inQuestionChannel($m->channel_id, $parentId)) {
             $this->trace($m, "Channel gehoert nicht zu den Antwort-Channels (QUESTION_CHANNEL_IDS)");
             return;
@@ -334,6 +406,9 @@ final class Bot
         }
 
         $delay = max(5, Env::int('ANSWER_DELAY_SECONDS', 90));
+        if ($this->isAnswerOnlyCategory($parentId)) {
+            $delay = max(3, Env::int("TICKET_ANSWER_DELAY_SECONDS", 8)); // in Tickets zeitnah antworten
+        }
         if ($this->testMode()) {
             $delay = min($delay, 10); // im Testmodus schnell antworten
         }
@@ -364,6 +439,9 @@ final class Bot
         }
         $q = $this->pending[$m->id];
         unset($this->pending[$m->id]);
+        if ($this->isTicketChannel($m) && $this->ticketMuted($m->channel_id)) {
+            return; // Teamler hat inzwischen uebernommen
+        }
 
         $name = $m->author->username;
         $sie = strtolower(Env::get('ADDRESS_FORM', 'du')) === 'sie';
