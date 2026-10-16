@@ -101,6 +101,7 @@ final class Bot
             }
 
             if ($this->isTeam($m)) {
+                $this->trace($m, "Nachricht von einem Teamler - der Bot antwortet Teamlern nur im Testmodus (Panel > Steuerung)");
                 $this->handleTeamMessage($m);
                 return;
             }
@@ -108,6 +109,21 @@ final class Bot
             $this->handlePlayerMessage($m);
         } catch (\Throwable $e) {
             echo '[Fehler] ' . $e->getMessage() . "\n";
+        }
+    }
+
+    /** Diagnose im Log: warum antwortet der Bot (nicht)? Nur in Antwort-Channels. Abschaltbar mit ANSWER_DEBUG=false. */
+    private function trace(Message $m, string $msg): void
+    {
+        if (!$this->settings->bool("ANSWER_DEBUG", true)) {
+            return;
+        }
+        $watched = in_array($m->channel_id, $this->questionChannels, true)
+            || in_array($m->channel_id, $this->alwaysChannels, true)
+            || $this->isAnswerOnlyCategory($this->parentOf($m));
+        if ($watched) {
+            echo "[Antwort] #{$m->channel_id} {$m->author->username}: {$msg}
+";
         }
     }
 
@@ -218,22 +234,26 @@ final class Bot
 
         $parentId = $this->parentOf($m);
         if (!$this->inQuestionChannel($m->channel_id, $parentId)) {
+            $this->trace($m, "Channel gehoert nicht zu den Antwort-Channels (QUESTION_CHANNEL_IDS)");
             return;
         }
         $norm = Text::normalize($m->content);
         // Support-Chat und Tickets: auf jede Nachricht antworten; sonst nur auf Fragen
         $always = in_array($m->channel_id, $this->alwaysChannels, true) || $this->isAnswerOnlyCategory($parentId);
         if ($always ? mb_strlen(trim($m->content)) < 10 : !Text::looksLikeQuestion($m->content, $norm)) {
+            $this->trace($m, $always ? "zu kurz (unter 10 Zeichen)" : "keine Frage erkannt (Fragezeichen oder Fragewort wie wie/was/wo noetig)");
             return;
         }
         // Pro Person und Channel nur eine offene Antwort gleichzeitig
         foreach ($this->pending as $p) {
             if ($p["channel"] === $m->channel_id && $p["user"] === $m->author->id) {
+                $this->trace($m, "es wartet bereits eine Antwort fuer diese Person");
                 return;
             }
         }
 
         if (!$this->settings->bool('ANSWERS_ENABLED', true)) {
+            $this->trace($m, "Fragen beantworten ist im Panel ausgeschaltet (Steuerung)");
             return;
         }
 
@@ -241,8 +261,14 @@ final class Bot
         if ($this->testMode()) {
             $delay = min($delay, 10); // im Testmodus schnell antworten
         }
+        $this->trace($m, "Frage erkannt - antworte in {$delay} s, falls kein Teamler zuvorkommt");
         $timer = $this->discord->getLoop()->addTimer($delay, function () use ($m) {
-            $this->answerIfUnanswered($m);
+            try {
+                $this->answerIfUnanswered($m);
+            } catch (Throwable $e) {
+                echo "[Fehler] Antwort fehlgeschlagen: " . $e->getMessage() . " (" . basename($e->getFile()) . ":" . $e->getLine() . ")
+";
+            }
         });
         $this->pending[$m->id] = [
             'channel' => $m->channel_id,
@@ -257,6 +283,7 @@ final class Bot
     private function answerIfUnanswered(Message $m): void
     {
         if (!isset($this->pending[$m->id])) {
+            $this->trace($m, "ein Teamler hat bereits geantwortet - Bot bleibt still");
             return; // Teamler war schneller
         }
         $q = $this->pending[$m->id];
@@ -275,6 +302,7 @@ final class Bot
             array_unshift($context, ['type' => 'qa', 'id' => $hit['id'], 'text' => $hit['answer'], 'channel' => '', 'score' => 1.0]);
         }
         $kid = $hit['id'] ?? null;
+        $this->trace($m, "Wissen gefunden: " . count($context) . " Treffer" . ($context ? ", bester Wert " . round((float) $context[0]["score"], 2) : "") . ($hit ? " (gelernte Team-Antwort)" : ""));
 
         // Nichts Passendes gelernt: freundlicher Hinweis (wird in den Antwort-Channels immer gesendet)
         if ($context === []) {
