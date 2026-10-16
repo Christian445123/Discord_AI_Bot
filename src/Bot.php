@@ -53,6 +53,7 @@ final class Bot
         $this->discord = new Discord([
             'token' => Env::get('DISCORD_TOKEN'),
             'intents' => Intents::getDefaultIntents() | Intents::MESSAGE_CONTENT,
+            'logger' => Log::make('bot'),
         ]);
     }
 

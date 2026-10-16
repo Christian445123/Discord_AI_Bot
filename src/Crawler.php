@@ -68,6 +68,7 @@ final class Crawler
         $this->discord = new Discord([
             'token' => Env::get('DISCORD_TOKEN'),
             'intents' => Intents::getDefaultIntents() | Intents::MESSAGE_CONTENT,
+            'logger' => Log::make('bot'),
         ]);
     }
 
@@ -234,6 +235,9 @@ final class Crawler
             }
         )->then(null, function ($e) use ($channel, $name) {
             $msg = is_object($e) && method_exists($e, 'getMessage') ? $e->getMessage() : (string) $e;
+            if ($e instanceof \Throwable) {
+                $msg .= ' (' . basename($e->getFile()) . ':' . $e->getLine() . ')';
+            }
             echo "  [Fehler]        #{$name}: {$msg}\n";
             $this->stats['skipped']++;
             $this->saveChannelState($channel, 'error', mb_substr($msg, 0, 250), null, 0);
@@ -291,8 +295,25 @@ final class Crawler
         $isSource = in_array($channel->id, $this->sourceAllow, true);
 
         foreach ($messages as $m) {
+            try {
+                $this->evaluateMessage($guild, $channel, $m, $isSource, $openQuestions, $r);
+            } catch (\Throwable $e) {
+                // Eine fehlerhafte Nachricht soll nicht den ganzen Channel abbrechen
+                echo '  [Fehler] Nachricht ' . $m->id . ': ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";
+            }
+        }
+        return $r;
+    }
+
+    /**
+     * @param array<string,array{text:string,time:int}> $openQuestions
+     * @param array<string,int> $r
+     */
+    private function evaluateMessage(Guild $guild, Channel $channel, Message $m, bool $isSource, array &$openQuestions, array &$r): void
+    {
+        {
             if ($m->author === null || ($m->author->bot && !$isSource)) {
-                continue;
+                return;
             }
             $text = $this->clean((string) $m->content);
             if ($isSource) {
@@ -300,7 +321,7 @@ final class Crawler
             }
             if ($text === '') {
                 $r['empty']++;
-                continue;
+                return;
             }
             $time = $m->timestamp ? $m->timestamp->getTimestamp() : time();
 
@@ -310,7 +331,7 @@ final class Crawler
                 $infoStored = true;
             }
             if ($m->author->bot) {
-                continue;
+                return;
             }
 
             if (!$this->isTeam($guild, $m->author->id)) {
@@ -318,7 +339,7 @@ final class Crawler
                     $openQuestions[$m->id] = ['text' => $text, 'time' => $time];
                     $r['questions']++;
                 }
-                continue;
+                return;
             }
             $r['team']++;
 
@@ -357,7 +378,6 @@ final class Crawler
                 $r['infos'] += $this->storeInfo($m, $channel, $text);
             }
         }
-        return $r;
     }
 
     /** Speichert einen Text in Abschnitten (max. ~700 Zeichen), damit der Bot gezielt den passenden Teil ausgeben kann. */
@@ -400,18 +420,30 @@ final class Crawler
     private function embedText(Message $m): string
     {
         $parts = [];
-        foreach ($m->embeds ?? [] as $e) {
-            foreach ([$e->title ?? '', $e->description ?? ''] as $t) {
-                if (trim((string) $t) !== '') {
-                    $parts[] = $this->clean((string) $t);
+        try {
+            // Embeds in ein einfaches Array umwandeln - unabhaengig davon, ob die Bibliothek Objekte oder Arrays liefert
+            $embeds = json_decode((string) json_encode($m->embeds ?? []), true);
+            foreach (is_array($embeds) ? $embeds : [] as $e) {
+                if (!is_array($e)) {
+                    continue;
+                }
+                foreach ([$e['title'] ?? '', $e['description'] ?? ''] as $t) {
+                    if (is_string($t) && trim($t) !== '') {
+                        $parts[] = $this->clean($t);
+                    }
+                }
+                foreach (is_array($e['fields'] ?? null) ? $e['fields'] : [] as $f) {
+                    if (!is_array($f)) {
+                        continue;
+                    }
+                    $line = trim((string) ($f['name'] ?? '') . ': ' . (string) ($f['value'] ?? ''), ': ');
+                    if ($line !== '') {
+                        $parts[] = $this->clean($line);
+                    }
                 }
             }
-            foreach ($e->fields ?? [] as $f) {
-                $line = trim(($f->name ?? '') . ': ' . ($f->value ?? ''), ': ');
-                if ($line !== '') {
-                    $parts[] = $this->clean($line);
-                }
-            }
+        } catch (\Throwable $e) {
+            echo '  [Hinweis] Embed konnte nicht gelesen werden: ' . $e->getMessage() . "\n";
         }
         return implode("\n", $parts);
     }

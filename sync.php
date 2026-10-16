@@ -21,6 +21,8 @@ $db = new Database();
 $discord = new Discord([
     'token' => Env::get('DISCORD_TOKEN'),
     'intents' => Intents::getDefaultIntents(),
+    'logger' => App\Log::make('sync'),
+    'logger' => Appog::make('sync'),
 ]);
 
 $exit = 0;
