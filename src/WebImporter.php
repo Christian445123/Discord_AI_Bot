@@ -68,27 +68,76 @@ final class WebImporter
     }
 
     /** @return array{0:int,1:string,2:string} */
+    private function userAgent(): string
+    {
+        return Env::get(
+            'WEB_USER_AGENT',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 ViennaStateRP-SupportBot/1.0'
+        );
+    }
+
+    /** @return string[] Browser-aehnliche Header, damit Schutzsysteme den Abruf nicht als Bot ablehnen */
+    private function headers(): array
+    {
+        return [
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language: de-AT,de;q=0.9,en;q=0.7',
+            'Cache-Control: no-cache',
+        ];
+    }
+
+    /** Erklaert eine Sperre (403/429/503) moeglichst konkret. */
+    private function blockedHint(int $status, string $body, array $respHeaders): string
+    {
+        $server = $respHeaders['server'] ?? '';
+        $cf = isset($respHeaders['cf-ray']) || stripos($server, 'cloudflare') !== false || stripos($body, 'cf-chl') !== false || stripos($body, 'Just a moment') !== false;
+        $hint = "HTTP {$status}" . ($server !== '' ? " (Server: {$server})" : '');
+        if ($cf) {
+            $hint .= ' - Cloudflare-Schutz blockiert den Abruf. In Cloudflare unter Sicherheit > WAF eine Ausnahme fuer die Server-IP des Bots anlegen oder den Bot-Schutz fuer /regelwerk.php u.a. lockern.';
+        } elseif (in_array($status, [403, 429, 503], true)) {
+            $hint .= ' - die Website lehnt den Abruf ab. Server-IP des Bots in der Firewall/WAF/Hoster-Schutz der Website freigeben'
+                . ' oder WEB_USER_AGENT in der .env anpassen. Pruefen mit: curl -I ' . 'https://viennastaterp.at/ (vom Bot-Server aus).';
+        }
+        return $hint;
+    }
+
     private function fetch(string $url): array
     {
         if (function_exists('curl_init')) {
+            $respHeaders = [];
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 3, CURLOPT_TIMEOUT => 25,
-                CURLOPT_USERAGENT => 'ViennaStateRP-SupportBot/1.0', CURLOPT_ENCODING => '',
+                CURLOPT_USERAGENT => $this->userAgent(), CURLOPT_ENCODING => '', CURLOPT_HTTPHEADER => $this->headers(),
+                CURLOPT_HEADERFUNCTION => function ($ch, string $line) use (&$respHeaders): int {
+                    if (str_contains($line, ':')) {
+                        [$k, $v] = explode(':', $line, 2);
+                        $respHeaders[strtolower(trim($k))] = trim($v);
+                    }
+                    return strlen($line);
+                },
             ]);
             $body = curl_exec($ch);
             $err = $body === false ? curl_error($ch) : '';
             $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
-            return [$status, $body === false ? '' : (string) $body, $err];
+            $body = $body === false ? '' : (string) $body;
+            if ($status !== 200 && $err === '') {
+                $err = $this->blockedHint($status, $body, $respHeaders);
+            }
+            return [$status, $body, $err];
         }
-        $ctx = stream_context_create(['http' => ['timeout' => 25, 'header' => "User-Agent: ViennaStateRP-SupportBot/1.0\r\n", 'ignore_errors' => true]]);
+        $ctx = stream_context_create(['http' => [
+            'timeout' => 25, 'ignore_errors' => true,
+            'header' => 'User-Agent: ' . $this->userAgent() . "\r\n" . implode("\r\n", $this->headers()) . "\r\n",
+        ]]);
         $body = @file_get_contents($url, false, $ctx);
         $status = 0;
         if (isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) {
             $status = (int) $m[1];
         }
-        return [$status, $body === false ? '' : $body, $body === false ? 'Abruf fehlgeschlagen' : ''];
+        $body = $body === false ? '' : $body;
+        return [$status, $body, $status === 200 ? '' : ($status === 0 ? 'Abruf fehlgeschlagen' : $this->blockedHint($status, $body, []))];
     }
 
     /**
