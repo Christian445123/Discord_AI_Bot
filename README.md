@@ -47,6 +47,15 @@ Programme starten (`exec`/`shell_exec`/`proc_open` nicht in `disable_functions`)
 `jobrunner.log`, `crawl.log` und `panel-error.log` ansehen. Liegt das PHP-CLI nicht im Pfad, in der `.env`
 `PHP_CLI=/pfad/zu/php` setzen.
 
+## Antworten in ganzen Sätzen
+
+Der Bot sucht zur Frage die passenden Stellen im gesamten Wissen (gelernte Antworten + Server-Infos) und formuliert daraus
+eine höfliche Antwort. Mit `ANTHROPIC_API_KEY` (und `ANTHROPIC_MODEL`) in der `.env` übernimmt das die Claude-API; dabei werden
+nur die Frage und die ausgewählten Wissensstücke an Anthropic gesendet. Ohne Schlüssel (oder bei einem Fehler) wählt der Bot
+selbst die passenden Sätze aus dem besten Treffer. Im Panel unter **Steuerung** lässt sich „KI-Antworten“ ein-/ausschalten.
+Weiß der Bot nichts, antwortet er in den Antwort-Channels trotzdem mit einem freundlichen Hinweis. Wer sofort statt nach
+`ANSWER_DELAY_SECONDS` (Wartezeit, ob ein Teamler schneller ist) antworten soll, setzt den Wert niedrig (min. 5).
+
 ## Wo der Bot antwortet
 
 - `QUESTION_CHANNEL_IDS`: Channels, in denen der Bot auf **Fragen** antwortet (leer = überall).

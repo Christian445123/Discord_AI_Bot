@@ -150,10 +150,20 @@ final class Knowledge
      */
     public function search(string $question, float $min = 0.6): ?array
     {
+        return $this->searchMany($question, 1, $min)[0] ?? null;
+    }
+
+    /**
+     * Die besten Treffer (absteigend), z.B. als Grundlage fuer eine formulierte Antwort.
+     *
+     * @return array<int,array{type:string,id:int,text:string,channel:string,score:float}>
+     */
+    public function searchMany(string $question, int $limit = 4, float $min = 0.25): array
+    {
         $this->loadCorpus();
         $qt = Text::tokens(Text::normalize($question));
         if ($qt === [] || $this->corpus === []) {
-            return null;
+            return [];
         }
         $n = count($this->corpus);
         $idf = [];
@@ -164,8 +174,7 @@ final class Knowledge
             $total += $idf[$t];
         }
 
-        $best = null;
-        $bestScore = 0.0;
+        $hits = [];
         foreach ($this->corpus as $d) {
             $matched = 0.0;
             $matchedQ = 0.0;
@@ -183,15 +192,34 @@ final class Knowledge
                 continue; // mindestens zwei uebereinstimmende Woerter (bei kurzen Fragen eines)
             }
             $score = max($matchedQ / $total, 0.9 * ($matched / $total));
-            if ($score > $bestScore) {
-                $bestScore = $score;
-                $best = $d;
+            if ($score >= $min) {
+                $hits[] = ['type' => $d['type'], 'id' => $d['id'], 'text' => $d['text'], 'channel' => $d['channel'], 'score' => $score];
             }
         }
-        if ($best === null || $bestScore < $min) {
-            return null;
+        usort($hits, fn($a, $b) => $b['score'] <=> $a['score']);
+        return array_slice($hits, 0, max(1, $limit));
+    }
+
+    /**
+     * Waehlt aus einem laengeren Text die Saetze, die am besten zur Frage passen (in Originalreihenfolge).
+     */
+    public function bestSentences(string $text, string $question, int $max = 3): string
+    {
+        $qt = array_flip(Text::tokens(Text::normalize($question)));
+        $parts = preg_split('/(?<=[.!?:])\s+|\R+/u', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        if (count($parts) <= $max) {
+            return trim($text);
         }
-        return ['type' => $best['type'], 'id' => $best['id'], 'text' => $best['text'], 'channel' => $best['channel'], 'score' => $bestScore];
+        $scored = [];
+        foreach ($parts as $i => $p) {
+            $tok = Text::tokens(Text::normalize($p));
+            $hit = count(array_intersect_key(array_flip($tok), $qt));
+            $scored[$i] = $hit;
+        }
+        arsort($scored);
+        $keep = array_slice(array_keys($scored), 0, $max);
+        sort($keep);
+        return trim(implode(' ', array_map(fn($i) => trim($parts[$i]), $keep)));
     }
 
     public function markUsed(int $id): void

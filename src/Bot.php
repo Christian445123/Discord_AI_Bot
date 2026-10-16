@@ -16,6 +16,7 @@ final class Bot
     private Knowledge $knowledge;
     private Moderator $moderator;
     private Settings $settings;
+    private ?Llm $llm = null;
     private bool $noLearn = false;
     /** @var string[] */
     private array $excludedIds = [];
@@ -262,53 +263,79 @@ final class Bot
         $q = $this->pending[$m->id];
         unset($this->pending[$m->id]);
 
-        $hit = $this->knowledge->find($q['text'], Env::float('MIN_CONFIDENCE', 0.55));
         $name = $m->author->username;
         $sie = strtolower(Env::get('ADDRESS_FORM', 'du')) === 'sie';
         $server = Env::get('SERVER_NAME', 'unser Server');
 
+        // 1) gelernte Antwort des Teams (sehr aehnliche Frage), 2) freie Suche ueber alles Gelernte und alle Server-Infos
+        $hit = $this->knowledge->find($q['text'], Env::float('MIN_CONFIDENCE', 0.55));
+        $context = $this->knowledge->searchMany($q['text'], 4, 0.25);
         if ($hit !== null) {
-            $reply = $sie
-                ? "Hallo {$name}, vielen Dank für Ihre Frage! Das Team hat dazu bereits Folgendes mitgeteilt:\n\n{$hit['answer']}\n\n"
-                  . "Sollte noch etwas offen sein, melden Sie sich gerne. Ein Teammitglied schaut bei Bedarf ebenfalls vorbei. – {$server}"
-                : "Hallo {$name}, danke für deine Frage! Das Team hat dazu bereits Folgendes mitgeteilt:\n\n{$hit['answer']}\n\n"
-                  . "Falls noch etwas offen ist, melde dich gerne. Ein Teammitglied schaut bei Bedarf ebenfalls vorbei. – {$server}";
             $this->knowledge->markUsed($hit['id']);
-            $m->reply($this->tag($reply))->then(function (Message $sent) use ($q, $hit) {
-                $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => $hit['id'], 'time' => time()];
-                $this->pruneBotAnswers();
-            });
+            $context = array_values(array_filter($context, fn($c) => !($c['type'] === 'qa' && $c['id'] === $hit['id'])));
+            array_unshift($context, ['type' => 'qa', 'id' => $hit['id'], 'text' => $hit['answer'], 'channel' => '', 'score' => 1.0]);
+        }
+        $kid = $hit['id'] ?? null;
+
+        // Nichts Passendes gelernt: freundlicher Hinweis (wird in den Antwort-Channels immer gesendet)
+        if ($context === []) {
+            if ($this->settings->bool('FALLBACK_ENABLED', true) || !empty($q['priority'])) {
+                $reply = $sie
+                    ? "Hallo {$name}, vielen Dank für Ihre Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied wird sich so bald wie möglich bei Ihnen melden. Wir bitten um etwas Geduld."
+                    : "Hallo {$name}, danke für deine Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied meldet sich so bald wie möglich bei dir. Bitte hab noch etwas Geduld.";
+                $this->sendAnswer($m, $reply, $q['text'], null);
+            }
             return;
         }
 
-        // Kein gelerntes Q&A: in den durchsuchten Server-Infos (Regeln, FAQ, Ankuendigungen) nachsehen.
-        // Freie Suche ueber das gesamte Wissen (gelernte Antworten + durchsuchte Server-Infos)
-        $info = $this->knowledge->search($q['text'], Env::float('SEARCH_MIN_SCORE', 0.6));
-        if ($info !== null) {
-            $snippet = mb_strimwidth($info['text'], 0, 900, '…');
-            $where = $info['type'] === 'info' && $info['channel'] !== '' ? "im Channel #{$info['channel']}" : 'in unserem Wissen';
-            $reply = $sie
-                ? "Hallo {$name}, vielen Dank für Ihre Frage! Dazu habe ich {$where} Folgendes gefunden:\n\n{$snippet}\n\n"
-                  . "Falls das Ihre Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei Ihnen. – {$server}"
-                : "Hallo {$name}, danke für deine Frage! Dazu habe ich {$where} Folgendes gefunden:\n\n{$snippet}\n\n"
-                  . "Falls das deine Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei dir. – {$server}";
-            $m->reply($this->tag($reply))->then(function (Message $sent) use ($q) {
-                $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => null, 'time' => time()];
-                $this->pruneBotAnswers();
-            });
+        // Antwort aus den gefundenen Informationen in Saetzen formulieren
+        $fallback = fn() => $this->composeAnswer($context, $q['text'], $name, $sie, $server);
+
+        if (Llm::configured() && $this->settings->bool('AI_ENABLED', true)) {
+            $this->llm()->answer($q['text'], $context, $name, $sie, $server)->then(
+                fn(string $text) => $this->sendAnswer($m, $text . "\n\n– {$server}", $q['text'], $kid),
+                function ($e) use ($m, $q, $kid, $fallback) {
+                    echo '[KI] Fehler: ' . (is_object($e) && method_exists($e, 'getMessage') ? $e->getMessage() : (string) $e) . " - nutze Satz-Auswahl\n";
+                    $this->sendAnswer($m, $fallback(), $q['text'], $kid);
+                }
+            );
             return;
         }
+        $this->sendAnswer($m, $fallback(), $q['text'], $kid);
+    }
 
-        if ($this->settings->bool('FALLBACK_ENABLED', true) || !empty($q['priority'])) {
-            $reply = $sie
-                ? "Hallo {$name}, vielen Dank für Ihre Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied wird sich so bald wie möglich bei Ihnen melden. Wir bitten um etwas Geduld."
-                : "Hallo {$name}, danke für deine Nachricht! Dazu habe ich leider noch keine Antwort gelernt. Ein Teammitglied meldet sich so bald wie möglich bei dir. Bitte hab noch etwas Geduld.";
-            $m->reply($this->tag($reply))->then(function (Message $sent) use ($q) {
-                // Wird ein Teamler hierauf antworten, soll er trotzdem als Lernquelle dienen.
-                $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => null, 'time' => time()];
-                $this->pruneBotAnswers();
-            });
-        }
+    /** Ohne KI: aus dem besten Treffer die passenden Saetze waehlen und hoeflich einbetten. */
+    private function composeAnswer(array $context, string $question, string $name, bool $sie, string $server): string
+    {
+        $top = $context[0];
+        $body = $this->knowledge->bestSentences($top['text'], $question, 3);
+        $body = mb_strimwidth($body, 0, 900, '…');
+        $intro = $top['type'] === 'info' && $top['channel'] !== ''
+            ? "Dazu habe ich im Channel #{$top['channel']} Folgendes gefunden:"
+            : 'Das Team hat dazu bereits Folgendes mitgeteilt:';
+
+        return $sie
+            ? "Hallo {$name}, vielen Dank für Ihre Frage! {$intro}\n\n{$body}\n\nFalls noch etwas offen ist, melden Sie sich gerne – ein Teammitglied hilft Ihnen bei Bedarf weiter. – {$server}"
+            : "Hallo {$name}, danke für deine Frage! {$intro}\n\n{$body}\n\nFalls noch etwas offen ist, melde dich gerne – ein Teammitglied hilft dir bei Bedarf weiter. – {$server}";
+    }
+
+    /** Antwort senden und merken, damit Teamler sie per Reply korrigieren koennen. */
+    private function sendAnswer(Message $m, string $text, string $question, ?int $knowledgeId): void
+    {
+        // keine Massen-Erwaehnungen, egal was in Wissen oder KI-Antwort steht
+        $text = str_replace(['@everyone', '@here'], ['@​everyone', '@​here'], $text);
+        $text = preg_replace('/<@[!&]?\d+>/', '', $text) ?? $text;
+        $text = mb_strimwidth($text, 0, 1900, '…');
+
+        $m->reply($this->tag($text))->then(function (Message $sent) use ($question, $knowledgeId) {
+            $this->botAnswers[$sent->id] = ['question' => $question, 'knowledgeId' => $knowledgeId, 'time' => time()];
+            $this->pruneBotAnswers();
+        });
+    }
+
+    private function llm(): Llm
+    {
+        return $this->llm ??= new Llm($this->discord->getLoop());
     }
 
     private function cancelPending(string $messageId): void
