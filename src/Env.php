@@ -40,8 +40,10 @@ final class Env
     }
 
     /**
-     * Ergaenzt Einstellungen, die in der .env fehlen (z.B. nach einem Update oder bei aelteren Installationen),
-     * mit den Werten und Kommentaren aus der .env.example. Vorhandene Werte werden nie veraendert.
+     * Gleicht die .env mit der .env.example ab: gleiche Einstellungen, gleiche Reihenfolge, gleiche Kommentare.
+     * Vorhandene Werte der .env bleiben unveraendert; fehlende Einstellungen werden mit dem Standardwert aus der
+     * .env.example ergaenzt. Eigene Zusatzeintraege der .env bleiben am Ende erhalten.
+     * Vor einer Aenderung wird eine Sicherung als .env.backup angelegt.
      *
      * @return string[] Namen der ergaenzten Einstellungen
      */
@@ -52,45 +54,56 @@ final class Env
         if (!is_file($envFile) || !is_file($exFile) || !is_writable($envFile)) {
             return [];
         }
+        $oldContent = (string) file_get_contents($envFile);
 
-        $have = [];
-        foreach (file($envFile, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
-            if (preg_match('/^\s*([A-Za-z0-9_]+)\s*=/', $line, $m)) {
-                $have[$m[1]] = true;
+        $values = [];
+        foreach (preg_split('/\R/', $oldContent) ?: [] as $line) {
+            if (preg_match('/^\s*([A-Za-z0-9_]+)\s*=(.*)$/', $line, $m) && !array_key_exists($m[1], $values)) {
+                $values[$m[1]] = rtrim($m[2]);
             }
         }
 
-        $added = [];
         $out = [];
-        $comment = [];
-        foreach (file($exFile, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
-            $trim = trim($line);
-            if ($trim !== '' && $trim[0] === '#') {
-                $comment[] = $line;
-                continue;
-            }
-            if (preg_match('/^([A-Za-z0-9_]+)=(.*)$/', $trim, $m)) {
-                if (!isset($have[$m[1]])) {
-                    $added[$m[1]] = $m[2];
-                    $out = array_merge($out, $comment, [$trim]);
+        $added = [];
+        $inExample = [];
+        foreach (preg_split('/\R/', rtrim((string) file_get_contents($exFile))) ?: [] as $line) {
+            if (preg_match('/^([A-Za-z0-9_]+)=(.*)$/', trim($line), $m)) {
+                $inExample[$m[1]] = true;
+                if (array_key_exists($m[1], $values)) {
+                    $out[] = $m[1] . '=' . $values[$m[1]];
+                } else {
+                    $out[] = $m[1] . '=' . $m[2];
+                    $added[] = $m[1];
+                    if ($m[2] !== '') {
+                        $_ENV[$m[1]] = trim($m[2], "'\"");
+                    }
                 }
+            } else {
+                $out[] = rtrim($line); // Kommentare und Leerzeilen
             }
-            $comment = [];
         }
 
-        if ($added === []) {
-            return [];
-        }
-        $block = PHP_EOL . '# --- automatisch ergaenzt (' . date('Y-m-d H:i') . ') ---' . PHP_EOL . implode(PHP_EOL, $out) . PHP_EOL;
-        if (@file_put_contents($envFile, $block, FILE_APPEND | LOCK_EX) === false) {
-            return [];
-        }
-        foreach ($added as $k => $v) {
-            if (!isset($_ENV[$k]) && $v !== '') {
-                $_ENV[$k] = trim($v, "'\"");
+        $extra = array_diff_key($values, $inExample);
+        if ($extra !== []) {
+            $out[] = '';
+            $out[] = '# --- weitere Einstellungen (nicht in der .env.example) ---';
+            foreach ($extra as $k => $v) {
+                $out[] = $k . '=' . $v;
             }
         }
-        return array_keys($added);
+
+        $new = implode(PHP_EOL, $out) . PHP_EOL;
+        $norm = fn(string $s) => str_replace("\r\n", "\n", $s);
+        if ($norm($new) === $norm($oldContent)) {
+            return [];
+        }
+
+        @copy($envFile, $envFile . '.backup');
+        @chmod($envFile . '.backup', 0600);
+        if (@file_put_contents($envFile, $new, LOCK_EX) === false) {
+            return [];
+        }
+        return $added;
     }
 
     public static function get(string $key, string $default = ''): string
