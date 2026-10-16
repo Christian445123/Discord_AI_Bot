@@ -13,7 +13,6 @@ $toggles = [
     'ANSWERS_ENABLED' => ['Fragen beantworten', 'Der Bot antwortet auf Fragen, wenn kein Teamler geantwortet hat.', true],
     'LEARNING_ENABLED' => ['Von Teamlern lernen', 'Antworten von Teamlern werden als Wissen gespeichert.', true],
     'MODERATION_ENABLED' => ['Channel-Überwachung', 'Der Bot greift bei Streit/Beleidigungen deeskalierend ein.', true],
-    'AI_ENABLED' => ['KI-Antworten in Saetzen', 'Der Bot formuliert aus dem gefundenen Wissen mit KI (Claude) eine hoefliche Antwort. Voraussetzung: ANTHROPIC_API_KEY in der .env. Ohne KI waehlt er passende Saetze aus dem Wissen.', true],
     'FALLBACK_ENABLED' => ['Hinweis bei unbekannter Frage', 'Freundlicher Hinweis, wenn der Bot keine Antwort kennt.', true],
     'CRAWL_AUTO_ENABLED' => ['Automatische Durchsuchung', 'Der Bot durchsucht den Server regelmäßig selbst (Intervall siehe unten).', false],
     'TEST_MODE' => ['Testmodus', 'Teamler werden NICHT ignoriert: Ihre Nachrichten werden wie Spielernachrichten behandelt '

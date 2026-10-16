@@ -16,7 +16,6 @@ final class Bot
     private Knowledge $knowledge;
     private Moderator $moderator;
     private Settings $settings;
-    private ?Llm $llm = null;
     private bool $noLearn = false;
     /** @var string[] */
     private array $excludedIds = [];
@@ -288,41 +287,14 @@ final class Bot
             return;
         }
 
-        // Antwort aus den gefundenen Informationen in Saetzen formulieren
-        $fallback = fn() => $this->composeAnswer($context, $q['text'], $name, $sie, $server);
-
-        if (Llm::configured() && $this->settings->bool('AI_ENABLED', true)) {
-            $this->llm()->answer($q['text'], $context, $name, $sie, $server)->then(
-                fn(string $text) => $this->sendAnswer($m, $text . "\n\n– {$server}", $q['text'], $kid),
-                function ($e) use ($m, $q, $kid, $fallback) {
-                    echo '[KI] Fehler: ' . (is_object($e) && method_exists($e, 'getMessage') ? $e->getMessage() : (string) $e) . " - nutze Satz-Auswahl\n";
-                    $this->sendAnswer($m, $fallback(), $q['text'], $kid);
-                }
-            );
-            return;
-        }
-        $this->sendAnswer($m, $fallback(), $q['text'], $kid);
-    }
-
-    /** Ohne KI: aus dem besten Treffer die passenden Saetze waehlen und hoeflich einbetten. */
-    private function composeAnswer(array $context, string $question, string $name, bool $sie, string $server): string
-    {
-        $top = $context[0];
-        $body = $this->knowledge->bestSentences($top['text'], $question, 3);
-        $body = mb_strimwidth($body, 0, 900, '…');
-        $intro = $top['type'] === 'info' && $top['channel'] !== ''
-            ? "Dazu habe ich im Channel #{$top['channel']} Folgendes gefunden:"
-            : 'Das Team hat dazu bereits Folgendes mitgeteilt:';
-
-        return $sie
-            ? "Hallo {$name}, vielen Dank für Ihre Frage! {$intro}\n\n{$body}\n\nFalls noch etwas offen ist, melden Sie sich gerne – ein Teammitglied hilft Ihnen bei Bedarf weiter. – {$server}"
-            : "Hallo {$name}, danke für deine Frage! {$intro}\n\n{$body}\n\nFalls noch etwas offen ist, melde dich gerne – ein Teammitglied hilft dir bei Bedarf weiter. – {$server}";
+        // Antwort aus den gefundenen Informationen bauen (regelbasiert, ohne KI-Modell)
+        $this->sendAnswer($m, Answer::compose($this->knowledge, $context, $q['text'], $name, $sie, $server), $q['text'], $kid);
     }
 
     /** Antwort senden und merken, damit Teamler sie per Reply korrigieren koennen. */
     private function sendAnswer(Message $m, string $text, string $question, ?int $knowledgeId): void
     {
-        // keine Massen-Erwaehnungen, egal was in Wissen oder KI-Antwort steht
+        // keine Massen-Erwaehnungen, egal was in Wissen steht
         $text = str_replace(['@everyone', '@here'], ['@​everyone', '@​here'], $text);
         $text = preg_replace('/<@[!&]?\d+>/', '', $text) ?? $text;
         $text = mb_strimwidth($text, 0, 1900, '…');
@@ -331,11 +303,6 @@ final class Bot
             $this->botAnswers[$sent->id] = ['question' => $question, 'knowledgeId' => $knowledgeId, 'time' => time()];
             $this->pruneBotAnswers();
         });
-    }
-
-    private function llm(): Llm
-    {
-        return $this->llm ??= new Llm($this->discord->getLoop());
     }
 
     private function cancelPending(string $messageId): void

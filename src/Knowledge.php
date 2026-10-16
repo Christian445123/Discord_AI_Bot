@@ -222,6 +222,23 @@ final class Knowledge
         return trim(implode(' ', array_map(fn($i) => trim($parts[$i]), $keep)));
     }
 
+    /**
+     * Gewicht (Seltenheit) der Woerter im gesamten Wissen: seltene Woerter sind aussagekraeftiger.
+     *
+     * @param string[] $tokens
+     * @return array<string,float>
+     */
+    public function weights(array $tokens): array
+    {
+        $this->loadCorpus();
+        $n = max(1, count($this->corpus));
+        $out = [];
+        foreach ($tokens as $t) {
+            $out[$t] = log(($n + 1) / (($this->docFreq[$t] ?? 0) + 0.5)) + 1;
+        }
+        return $out;
+    }
+
     public function markUsed(int $id): void
     {
         $st = $this->db->pdo()->prepare('UPDATE knowledge SET uses = uses + 1, last_used_at = ? WHERE id = ?');
