@@ -282,13 +282,15 @@ final class Bot
         }
 
         // Kein gelerntes Q&A: in den durchsuchten Server-Infos (Regeln, FAQ, Ankuendigungen) nachsehen.
-        $info = $this->knowledge->findInfo($q['text']);
+        // Freie Suche ueber das gesamte Wissen (gelernte Antworten + durchsuchte Server-Infos)
+        $info = $this->knowledge->search($q['text'], Env::float('SEARCH_MIN_SCORE', 0.6));
         if ($info !== null) {
-            $snippet = mb_strimwidth($info['content'], 0, 900, '…');
+            $snippet = mb_strimwidth($info['text'], 0, 900, '…');
+            $where = $info['type'] === 'info' && $info['channel'] !== '' ? "im Channel #{$info['channel']}" : 'in unserem Wissen';
             $reply = $sie
-                ? "Hallo {$name}, vielen Dank für Ihre Frage! Dazu habe ich im Channel #{$info['channel']} Folgendes gefunden:\n\n{$snippet}\n\n"
+                ? "Hallo {$name}, vielen Dank für Ihre Frage! Dazu habe ich {$where} Folgendes gefunden:\n\n{$snippet}\n\n"
                   . "Falls das Ihre Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei Ihnen. – {$server}"
-                : "Hallo {$name}, danke für deine Frage! Dazu habe ich im Channel #{$info['channel']} Folgendes gefunden:\n\n{$snippet}\n\n"
+                : "Hallo {$name}, danke für deine Frage! Dazu habe ich {$where} Folgendes gefunden:\n\n{$snippet}\n\n"
                   . "Falls das deine Frage nicht beantwortet, meldet sich gerne ein Teammitglied bei dir. – {$server}";
             $m->reply($this->tag($reply))->then(function (Message $sent) use ($q) {
                 $this->botAnswers[$sent->id] = ['question' => $q['text'], 'knowledgeId' => null, 'time' => time()];

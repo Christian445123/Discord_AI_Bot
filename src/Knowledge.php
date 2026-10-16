@@ -104,6 +104,96 @@ final class Knowledge
         return ['id' => (int) $best['id'], 'answer' => $best['answer'], 'confidence' => $bestScore];
     }
 
+    /** @var array<int,array<string,mixed>> */
+    private array $corpus = [];
+    /** @var array<string,int> */
+    private array $docFreq = [];
+    private int $corpusTime = 0;
+
+    /** Baut einen Suchindex ueber alle gelernten Antworten UND alle gespeicherten Server-Infos. */
+    private function loadCorpus(): void
+    {
+        if ($this->corpusTime !== 0 && time() - $this->corpusTime < 60) {
+            return;
+        }
+        $pdo = $this->db->pdo();
+        $docs = [];
+        foreach ($pdo->query('SELECT id, normalized, answer FROM knowledge WHERE score > -3') as $r) {
+            $docs[] = [
+                'type' => 'qa', 'id' => (int) $r['id'], 'text' => $r['answer'], 'channel' => '',
+                'q' => array_flip(Text::tokens($r['normalized'])),
+                't' => array_flip(Text::tokens($r['normalized'] . ' ' . Text::normalize($r['answer']))),
+            ];
+        }
+        foreach ($pdo->query('SELECT id, content, channel_name, normalized FROM server_info') as $r) {
+            $docs[] = [
+                'type' => 'info', 'id' => (int) $r['id'], 'text' => $r['content'], 'channel' => $r['channel_name'],
+                'q' => [], 't' => array_flip(Text::tokens($r['normalized'])),
+            ];
+        }
+        $df = [];
+        foreach ($docs as $d) {
+            foreach ($d['t'] as $tok => $_) {
+                $df[$tok] = ($df[$tok] ?? 0) + 1;
+            }
+        }
+        $this->corpus = $docs;
+        $this->docFreq = $df;
+        $this->corpusTime = time();
+    }
+
+    /**
+     * Freie Suche ueber das gesamte Wissen (Frage/Antwort-Paare und Server-Infos).
+     * Bewertung: Anteil der (nach Seltenheit gewichteten) Fragewoerter, die im Eintrag vorkommen.
+     *
+     * @return array{type:string,id:int,text:string,channel:string,score:float}|null
+     */
+    public function search(string $question, float $min = 0.6): ?array
+    {
+        $this->loadCorpus();
+        $qt = Text::tokens(Text::normalize($question));
+        if ($qt === [] || $this->corpus === []) {
+            return null;
+        }
+        $n = count($this->corpus);
+        $idf = [];
+        $total = 0.0;
+        foreach ($qt as $t) {
+            // unbekannte Woerter sind selten (hoher IDF) und senken die Abdeckung
+            $idf[$t] = log(($n + 1) / (($this->docFreq[$t] ?? 0) + 0.5)) + 1;
+            $total += $idf[$t];
+        }
+
+        $best = null;
+        $bestScore = 0.0;
+        foreach ($this->corpus as $d) {
+            $matched = 0.0;
+            $matchedQ = 0.0;
+            $count = 0;
+            foreach ($qt as $t) {
+                if (isset($d['t'][$t])) {
+                    $matched += $idf[$t];
+                    $count++;
+                }
+                if (isset($d['q'][$t])) {
+                    $matchedQ += $idf[$t];
+                }
+            }
+            if ($count < min(2, count($qt))) {
+                continue; // mindestens zwei uebereinstimmende Woerter (bei kurzen Fragen eines)
+            }
+            $score = max($matchedQ / $total, 0.9 * ($matched / $total));
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $d;
+            }
+        }
+        if ($best === null || $bestScore < $min) {
+            return null;
+        }
+        return ['type' => $best['type'], 'id' => $best['id'], 'text' => $best['text'], 'channel' => $best['channel'], 'score' => $bestScore];
+    }
+
     public function markUsed(int $id): void
     {
         $st = $this->db->pdo()->prepare('UPDATE knowledge SET uses = uses + 1, last_used_at = ? WHERE id = ?');
