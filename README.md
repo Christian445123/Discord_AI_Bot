@@ -82,6 +82,10 @@ lassen sich über `SYNONYMS` ergänzen (`fahrzeug=auto,wagen=auto`). Gibt es **k
 `php web.php` (oder im Panel **Steuerung > Website einlesen**) liest die Seiten aus `WEBSITE_URLS` (Startseite, Regelwerk, Allgemeine Hinweise,
 Changelog) in Abschnitten ein und lädt zusätzlich ein gesichertes **Grundwissen** (`src/Seed.php`: Server-IP, Voraussetzungen, Whitelist,
 Kosten, Streamer, Regeln wie New-Life/RDM/Metagaming/Safezone). Antworten aus Website und Regelwerk werden bei der Auswahl leicht bevorzugt.
+**Automatisch und von der Website aus:** Der Bot liest die Website regelmäßig selbst ein (Schalter und Intervall unter
+**Steuerung**, Standard alle 24 h). Außerdem kann die Website einen Import auslösen: Token in `WEB_TRIGGER_TOKEN` setzen und
+`https://<panel>/trigger.php?token=<TOKEN>` aufrufen (z.B. nach Änderungen am Regelwerk). Ohne Token ist das deaktiviert.
+
 Das Grundwissen ist im Panel unter **Wissen** (Herkunft „seed“) bearbeitbar; bei Änderungen auf der Website `src/Seed.php` anpassen.
 Bewusst nicht enthalten ist das Mindestalter, solange die Website 18 (Startseite) und 16 (Allgemeine Hinweise) nennt.
 

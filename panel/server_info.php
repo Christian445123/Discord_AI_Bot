@@ -41,6 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             flash($done ? 'Gelöscht: ' . implode(', ', $done) . '.' : 'Nichts ausgewählt - es wurde nichts gelöscht.');
         }
+    } elseif ($action === 'import_web') {
+        flash(dispatch_job($pdo, 'import_web', 'Website einlesen'));
     } elseif ($action === 'crawl' || $action === 'crawl_full') {
         // Bot online: er fuehrt den Auftrag aus. Sonst startet das Panel die Durchsuchung selbst.
         flash(dispatch_job($pdo, $action, $action === 'crawl' ? 'Durchsuchung' : 'Komplett neu einlesen'));
@@ -77,12 +79,24 @@ echo '<div class="card"><h2>Server durchsuchen</h2>'
     . 'Channels, die nur für das Team sichtbar sind, werden nicht gelesen.</p>'
     . '<div class="row" style="gap:10px"><form method="post" class="inline">' . csrf_field() . '<input type="hidden" name="action" value="crawl"><button>Durchsuchung starten</button></form>'
     . '<form method="post" class="inline" onsubmit="return confirm(\'Alle Channels komplett von vorn einlesen? Das kann länger dauern.\')">' . csrf_field()
-    . '<input type="hidden" name="action" value="crawl_full"><button class="sec">Komplett neu einlesen</button></form></div>'
+    . '<input type="hidden" name="action" value="crawl_full"><button class="sec">Komplett neu einlesen</button></form>'
+    . '<form method="post" class="inline">' . csrf_field()
+    . '<input type="hidden" name="action" value="import_web"><button class="sec">Website einlesen</button></form></div>'
     . '<p class="mute" style="margin-top:8px">„Durchsuchung starten“ liest nur neue Nachrichten. „Komplett neu einlesen“ liest alle Channels wieder von Anfang an.</p>';
 
 $hb = $pdo->query("SELECT updated_at FROM bot_status WHERE k = 'heartbeat'")->fetchColumn();
 $online = $hb && (time() - strtotime((string) $hb)) < 30;
 echo '<p class="mute" style="margin-top:12px">Bot: ' . ($online ? '<b style="color:var(--ok)">online</b>' : '<b style="color:var(--bad)">offline</b> - Aufträge führt dann das Panel selbst aus') . '</p>';
+
+$webJob = $pdo->query("SELECT * FROM jobs WHERE type = 'import_web' ORDER BY id DESC LIMIT 1")->fetch();
+if ($webJob) {
+    $wl = ['pending' => 'wartet', 'running' => 'läuft', 'done' => 'abgeschlossen', 'failed' => 'fehlgeschlagen'][$webJob['status']] ?? $webJob['status'];
+    echo '<p class="mute">Letzter Website-Import: <b>' . h($wl) . '</b> · ' . h($webJob['created_at'])
+        . ($webJob['note'] ? ' · ' . h($webJob['note']) : '') . ' <span class="mute">(Details: web.log)</span></p>';
+    if (in_array($webJob['status'], ['pending', 'running'], true)) {
+        echo '<meta http-equiv="refresh" content="5">';
+    }
+}
 
 $job = $pdo->query("SELECT * FROM jobs WHERE type IN ('crawl','crawl_full') ORDER BY id DESC LIMIT 1")->fetch();
 if ($job) {

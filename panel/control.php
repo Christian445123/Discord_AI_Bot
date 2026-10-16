@@ -15,6 +15,7 @@ $toggles = [
     'MODERATION_ENABLED' => ['Channel-Überwachung', 'Der Bot greift bei Streit/Beleidigungen deeskalierend ein.', true],
     'FALLBACK_ENABLED' => ['Hinweis bei unbekannter Frage', 'Freundlicher Hinweis, wenn der Bot keine Antwort kennt.', true],
     'MENTION_PROTECTION_ENABLED' => ['Markierungs-Schutz', 'Spieler werden freundlich darauf hingewiesen, wenn sie @everyone/@here verwenden oder Teamler (per Name oder Rolle) markieren.', true],
+    'WEB_AUTO_ENABLED' => ['Website automatisch einlesen', 'Der Bot liest die Website (Regelwerk, Hinweise ...) regelmaessig selbst als Wissen ein (Intervall siehe unten).', true],
     'CRAWL_AUTO_ENABLED' => ['Automatische Durchsuchung', 'Der Bot durchsucht den Server regelmäßig selbst (Intervall siehe unten).', false],
     'TEST_MODE' => ['Testmodus', 'Teamler werden NICHT ignoriert: Ihre Nachrichten werden wie Spielernachrichten behandelt '
         . '(Fragen werden beantwortet, Überwachung greift, kurze Wartezeit). Es wird nichts gelernt, Antworten sind mit „Testmodus“ gekennzeichnet.', false],
@@ -54,6 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $hours = max(1, min(720, (int) ($_POST['CRAWL_INTERVAL_HOURS'] ?? 24)));
         $up->execute(['CRAWL_INTERVAL_HOURS', (string) $hours]);
+        $webHours = max(1, min(720, (int) ($_POST['WEB_INTERVAL_HOURS'] ?? 24)));
+        $up->execute(['WEB_INTERVAL_HOURS', (string) $webHours]);
         flash('Gespeichert. Die Einstellungen gelten im Bot innerhalb weniger Sekunden.');
     } elseif (isset($actions[$action])) {
         flash(dispatch_job($pdo, $action, $actions[$action][0]));
@@ -105,6 +108,8 @@ foreach ($toggles as $key => [$label, $desc, $def]) {
 }
 echo '<label>Intervall der automatischen Durchsuchung (Stunden)</label><input type="number" name="CRAWL_INTERVAL_HOURS" min="1" max="720" style="max-width:160px" value="'
     . (int) setting_value($pdo, 'CRAWL_INTERVAL_HOURS', '24') . '">'
+    . '<label>Intervall des automatischen Website-Imports (Stunden)</label><input type="number" name="WEB_INTERVAL_HOURS" min="1" max="720" style="max-width:160px" value="'
+    . (int) setting_value($pdo, 'WEB_INTERVAL_HOURS', '24') . '">'
     . '<p><button>Speichern</button></p></form>';
 
 // Letzte Auftraege

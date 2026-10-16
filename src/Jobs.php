@@ -105,6 +105,30 @@ final class Jobs
         echo "[Jobs] Automatische Durchsuchung angelegt (Intervall {$hours} h)\n";
     }
 
+    /** Liest die Website regelmaessig automatisch neu ein (WEB_AUTO_ENABLED / WEB_INTERVAL_HOURS). */
+    private function autoWeb(): void
+    {
+        if (!$this->settings->bool('WEB_AUTO_ENABLED', true) || Env::get('WEBSITE_URLS') === '') {
+            return;
+        }
+        $hours = max(1, $this->settings->int('WEB_INTERVAL_HOURS', 24));
+        $pdo = $this->db->pdo();
+
+        $open = (int) $pdo->query("SELECT COUNT(*) FROM jobs WHERE type = 'import_web' AND status IN ('pending','running')")->fetchColumn();
+        if ($open > 0) {
+            return;
+        }
+        $last = $pdo->query("SELECT MAX(created_at) FROM jobs WHERE type = 'import_web'")->fetchColumn();
+        if ($last && time() - strtotime((string) $last) < $hours * 3600) {
+            return;
+        }
+        if (!$last && time() - $this->startedAt < 60) {
+            return; // erster Import kurz nach dem Start
+        }
+        $pdo->exec("INSERT INTO jobs (type, status, note, created_at) VALUES ('import_web', 'pending', 'automatisch', NOW())");
+        echo "[Jobs] Automatischer Website-Import angelegt (Intervall {$hours} h)\n";
+    }
+
     private function tick(): void
     {
         $pdo = $this->db->pdo();
@@ -121,6 +145,7 @@ final class Jobs
 
         if (++$this->ticks % 12 === 1) { // ca. einmal pro Minute
             $this->autoCrawl();
+            $this->autoWeb();
         }
 
         $row = $pdo->query("SELECT id, type FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1")->fetch();
