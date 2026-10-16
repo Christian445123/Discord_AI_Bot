@@ -23,6 +23,37 @@ final class Text
         return trim(preg_replace('/\s+/', ' ', $s) ?? $s);
     }
 
+    /** Eingebaute Wortgruppen (gleiche Bedeutung = gleicher Begriff); erweiterbar ueber SYNONYMS in der .env ("fahrzeug=auto,wagen=auto"). */
+    private const SYNONYMS = [
+        'fahrzeug' => 'auto', 'wagen' => 'auto', 'pkw' => 'auto', 'karre' => 'auto', 'autos' => 'auto', 'fahrzeuge' => 'auto',
+        'wohnung' => 'immobilie', 'haus' => 'immobilie', 'apartment' => 'immobilie', 'immo' => 'immobilie',
+        'arbeit' => 'job', 'beruf' => 'job', 'arbeiten' => 'job',
+        'bewerben' => 'bewerbung', 'bewirb' => 'bewerbung',
+        'melden' => 'support', 'hilfe' => 'support', 'ticket' => 'support',
+        'regeln' => 'regelwerk', 'regel' => 'regelwerk',
+        'geld' => 'bargeld', 'cash' => 'bargeld',
+        'verbinden' => 'joinen', 'beitreten' => 'joinen', 'einsteigen' => 'joinen',
+    ];
+
+    /** @var array<string,string>|null */
+    private static ?array $synonyms = null;
+
+    private static function canonical(string $w): string
+    {
+        if (self::$synonyms === null) {
+            self::$synonyms = self::SYNONYMS;
+            foreach (Env::list('SYNONYMS') as $pair) {
+                [$from, $to] = array_pad(explode('=', $pair, 2), 2, '');
+                $from = self::normalize($from);
+                $to = self::normalize($to);
+                if ($from !== '' && $to !== '') {
+                    self::$synonyms[$from] = $to;
+                }
+            }
+        }
+        return self::$synonyms[$w] ?? $w;
+    }
+
     /** @return string[] */
     public static function tokens(string $normalized): array
     {
@@ -31,6 +62,7 @@ final class Text
             if ($w === '' || in_array($w, self::STOPWORDS, true)) {
                 continue;
             }
+            $w = self::canonical($w);                                  // gleichbedeutende Begriffe zusammenfuehren
             $w = preg_replace('/(en|er|es|e|n|s|t)$/', '', $w) ?? $w; // einfaches Stemming
             if (strlen($w) >= 2) {
                 $out[$w] = true;

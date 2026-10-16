@@ -21,6 +21,7 @@ final class Jobs
     public const SCRIPTS = [
         'crawl' => ['crawl.php', [], 'crawl.log'],
         'crawl_full' => ['crawl.php', ['full'], 'crawl.log'],
+        'import_web' => ['web.php', [], 'web.log'],
         'sync_channels' => ['sync.php', [], 'sync.log'],
         'update_check' => ['update.php', ['check'], 'update.log'],
         'update_apply' => ['update.php', ['apply'], 'update.log'],

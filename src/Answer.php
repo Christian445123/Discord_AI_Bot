@@ -15,26 +15,58 @@ final class Answer
 
     /**
      * Liefert nur die Antwort selbst - ohne Begruessung, Quellenangabe oder Abschlussformel.
+     * Gibt null zurueck, wenn die gefundenen Texte die Frage nicht sinngemaess beantworten
+     * (zu wenige der wichtigen Fragewoerter kommen darin vor) - dann soll das Team uebernehmen.
      *
      * @param array<int,array{type:string,id:int,text:string,channel:string,score:float}> $context beste Treffer, bester zuerst
      */
-    public static function compose(Knowledge $knowledge, array $context, string $question, string $name = '', bool $sie = false, string $server = ''): string
+    public static function compose(Knowledge $knowledge, array $context, string $question, string $name = '', bool $sie = false, string $server = ''): ?string
     {
         $qTokens = Text::tokens(Text::normalize($question));
         $idf = $knowledge->weights($qTokens);
 
-        [$body] = self::selectBody($context, $qTokens, $idf);
+        [$body, , , $coverage] = self::selectBody($context, $qTokens, $idf);
+        if (trim($body) === '' || $coverage < Env::float('ANSWER_MIN_COVERAGE', 0.5)) {
+            return null;
+        }
         return $body;
     }
 
-    /** @return array{0:string,1:string[],2:bool} [Text, Channels, stammt direkt vom Team] */
+    /**
+     * Anteil (nach Seltenheit gewichtet) der Fragewoerter, die in den ausgewaehlten Texten vorkommen.
+     *
+     * @param string[] $texts
+     * @param array<string,float> $idf
+     */
+    private static function coverage(array $texts, array $idf): float
+    {
+        $total = array_sum($idf);
+        if ($total <= 0) {
+            return 0.0;
+        }
+        $have = [];
+        foreach ($texts as $t) {
+            foreach (Text::tokens(Text::normalize($t)) as $tok) {
+                $have[$tok] = true;
+            }
+        }
+        $hit = 0.0;
+        foreach ($idf as $tok => $w) {
+            if (isset($have[$tok])) {
+                $hit += $w;
+            }
+        }
+        return $hit / $total;
+    }
+
+    /** @return array{0:string,1:string[],2:bool,3:float} [Text, Channels, stammt direkt vom Team, Abdeckung der Frage] */
     private static function selectBody(array $context, array $qTokens, array $idf): array
     {
         $top = $context[0];
 
         // Sehr aehnliche Frage wurde schon vom Team beantwortet: diese Antwort im Original wiedergeben
         if ($top['type'] === 'qa' && $top['score'] >= 0.85) {
-            return [trim(mb_strimwidth($top['text'], 0, self::MAX_CHARS, '…')), [], true];
+            return [trim(mb_strimwidth($top['text'], 0, self::MAX_CHARS, '…')), [], true, 1.0];
         }
 
         $total = array_sum($idf) ?: 1.0;
@@ -52,6 +84,9 @@ final class Answer
                 if ($c['type'] === 'qa') {
                     $score *= 1.15;                 // Antworten des Teams etwas hoeher gewichten
                 }
+                if (str_starts_with($c['channel'], 'Website')) {
+                    $score *= 1.1;                  // Website/Regelwerk gilt als verlaesslichste Quelle
+                }
                 $score *= 1 - 0.08 * $rank;          // bessere Treffer bevorzugen
                 if (mb_strlen($s) > 300) {
                     $score *= 0.9;
@@ -62,9 +97,14 @@ final class Answer
 
         $best = $cands ? max(array_column($cands, 'score')) : 0.0;
         if ($best <= 0.0) {
-            // Kein einzelner Satz passt klar: Anfang des besten Treffers verwenden
+            // Kein einzelner Satz passt klar: Anfang des besten Treffers verwenden (Abdeckung wird unten geprueft)
             $first = array_slice(self::sentences($top['text']), 0, 2);
-            return [mb_strimwidth(implode(' ', $first), 0, self::MAX_CHARS, '…'), $top['channel'] !== '' ? [$top['channel']] : [], $top['type'] === 'qa'];
+            return [
+                mb_strimwidth(implode(' ', $first), 0, self::MAX_CHARS, '…'),
+                $top['channel'] !== '' ? [$top['channel']] : [],
+                $top['type'] === 'qa',
+                self::coverage($first, $idf),
+            ];
         }
 
         usort($cands, fn($a, $b) => $b['score'] <=> $a['score']);
@@ -94,7 +134,7 @@ final class Answer
         $channels = array_values(array_unique(array_filter(array_column($chosen, 'channel'))));
         $fromTeam = $chosen !== [] && count(array_unique(array_column($chosen, 'type'))) === 1 && $chosen[0]['type'] === 'qa';
 
-        return [mb_strimwidth($body, 0, self::MAX_CHARS + 60, '…'), $channels, $fromTeam];
+        return [mb_strimwidth($body, 0, self::MAX_CHARS + 60, '…'), $channels, $fromTeam, self::coverage($texts, $idf)];
     }
 
     /** @return string[] */

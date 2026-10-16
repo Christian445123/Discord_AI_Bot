@@ -72,6 +72,19 @@ leer = erste Rolle aus `TEAM_ROLE_IDS`). Antwortet ein Teamler auf diese Nachric
 Der Bot wartet `ANSWER_DELAY_SECONDS`, ob ein Teamler zuerst antwortet; in diesen Channels erscheint bei unbekannter Frage
 immer der freundliche Hinweis. Änderungen an diesen Werten brauchen einen Bot-Neustart (`pm2 restart discord-ai-bot`).
 
+Damit die Antworten **sinngemäß** sind, prüft der Bot, ob die ausgewählten Sätze die wichtigen (seltenen) Wörter der Frage abdecken
+(`ANSWER_MIN_COVERAGE`, Standard 0.5). Gleichbedeutende Begriffe (z.B. Fahrzeug/Auto/Wagen) werden zusammengeführt; eigene Wortgruppen
+lassen sich über `SYNONYMS` ergänzen (`fahrzeug=auto,wagen=auto`). Gibt es **keine gültige Antwort**, leitet der Bot die Frage
+**sofort** (ohne Wartezeit) ans Team weiter und markiert es. Dank und Grüße (Smalltalk) beantwortet er nicht und leitet sie nicht weiter.
+
+## Website und Regelwerk als Wissensquelle
+
+`php web.php` (oder im Panel **Steuerung > Website einlesen**) liest die Seiten aus `WEBSITE_URLS` (Startseite, Regelwerk, Allgemeine Hinweise,
+Changelog) in Abschnitten ein und lädt zusätzlich ein gesichertes **Grundwissen** (`src/Seed.php`: Server-IP, Voraussetzungen, Whitelist,
+Kosten, Streamer, Regeln wie New-Life/RDM/Metagaming/Safezone). Antworten aus Website und Regelwerk werden bei der Auswahl leicht bevorzugt.
+Das Grundwissen ist im Panel unter **Wissen** (Herkunft „seed“) bearbeitbar; bei Änderungen auf der Website `src/Seed.php` anpassen.
+Bewusst nicht enthalten ist das Mindestalter, solange die Website 18 (Startseite) und 16 (Allgemeine Hinweise) nennt.
+
 ## Tickets: Bot an/aus
 
 In Tickets (Kategorie aus `ANSWER_ONLY_CATEGORY_IDS`) beantwortet der Bot die Fragen des Spielers nach `TICKET_ANSWER_DELAY_SECONDS`

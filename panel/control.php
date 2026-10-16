@@ -24,12 +24,13 @@ $toggles = [
 $actions = [
     'crawl' => ['Server jetzt durchsuchen', 'Liest die Channel-Verläufe und speichert Wissen.'],
     'crawl_full' => ['Komplett neu einlesen', 'Liest alle Channels wieder von Anfang an (statt nur neue Nachrichten).'],
+    'import_web' => ['Website einlesen', 'Liest die Seiten aus WEBSITE_URLS und speichert den Text als Wissen.'],
     'sync_channels' => ['Channels synchronisieren', 'Aktualisiert die Kategorie-/Channel-Liste im Panel.'],
     'update_check' => ['Auf Updates prüfen', 'Holt den Stand von GitHub (Installation unter „Updates“).'],
     'restart' => ['Bot neu starten', 'Startet den Bot neu (pm2 startet ihn sofort wieder).'],
 ];
 $typeLabels = [
-    'crawl' => 'Server durchsuchen', 'crawl_full' => 'Komplett neu einlesen', 'sync_channels' => 'Channels synchronisieren', 'update_check' => 'Update-Prüfung',
+    'crawl' => 'Server durchsuchen', 'crawl_full' => 'Komplett neu einlesen', 'import_web' => 'Website einlesen', 'sync_channels' => 'Channels synchronisieren', 'update_check' => 'Update-Prüfung',
     'update_apply' => 'Update installieren', 'restart' => 'Neustart',
 ];
 

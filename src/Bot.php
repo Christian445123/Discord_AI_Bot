@@ -17,6 +17,8 @@ final class Bot
     private Moderator $moderator;
     private Settings $settings;
     private bool $noLearn = false;
+    /** @var array<string,int> Zeitpunkt der letzten Team-Benachrichtigung je Person und Channel */
+    private array $teamPinged = [];
     /** @var array<string,bool> */
     private array $ticketCache = [];
     /** @var array<string,int> */
@@ -404,6 +406,20 @@ final class Bot
             $this->trace($m, "Fragen beantworten ist im Panel ausgeschaltet (Steuerung)");
             return;
         }
+        if (!Text::looksLikeQuestion($m->content, $norm) && $this->isSmallTalk($norm)) {
+            $this->trace($m, "Smalltalk/Dank erkannt - keine Antwort noetig");
+            return;
+        }
+
+        $priority = $always || in_array($m->channel_id, $this->questionChannels, true);
+        $q = ['channel' => $m->channel_id, 'user' => $m->author->id, 'priority' => $priority, 'text' => $m->content, 'time' => time()];
+
+        // Gibt es ueberhaupt eine gueltige Antwort? Wenn nicht: sofort ans Team weiterleiten (ohne Wartezeit).
+        if ($this->buildAnswer($m->content) === null) {
+            $this->trace($m, 'keine gueltige Antwort im Wissen - leite sofort ans Team weiter');
+            $this->askTeam($m, $q, $m->author->username, strtolower(Env::get('ADDRESS_FORM', 'du')) === 'sie');
+            return;
+        }
 
         $delay = max(5, Env::int('ANSWER_DELAY_SECONDS', 90));
         if ($this->isAnswerOnlyCategory($parentId)) {
@@ -412,23 +428,54 @@ final class Bot
         if ($this->testMode()) {
             $delay = min($delay, 10); // im Testmodus schnell antworten
         }
-        $this->trace($m, "Frage erkannt - antworte in {$delay} s, falls kein Teamler zuvorkommt");
+        $this->trace($m, "Antwort gefunden - sende in {$delay} s, falls kein Teamler zuvorkommt");
         $timer = $this->discord->getLoop()->addTimer($delay, function () use ($m) {
             try {
                 $this->answerIfUnanswered($m);
-            } catch (Throwable $e) {
-                echo "[Fehler] Antwort fehlgeschlagen: " . $e->getMessage() . " (" . basename($e->getFile()) . ":" . $e->getLine() . ")
-";
+            } catch (\Throwable $e) {
+                echo '[Fehler] Antwort fehlgeschlagen: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";
             }
         });
-        $this->pending[$m->id] = [
-            'channel' => $m->channel_id,
-            'user' => $m->author->id,
-            'priority' => $always || in_array($m->channel_id, $this->questionChannels, true),
-            'text' => $m->content,
-            'time' => time(),
-            'timer' => $timer,
-        ];
+        $this->pending[$m->id] = $q + ['timer' => $timer];
+    }
+
+    /** Dank, Gruesse und Zustimmung brauchen keine Antwort und keine Team-Weiterleitung. */
+    private function isSmallTalk(string $norm): bool
+    {
+        $words = $norm === '' ? [] : explode(' ', $norm);
+        if (count($words) > 7) {
+            return false;
+        }
+        return (bool) preg_match('/\b(danke|dankeschoen|dankesehr|thx|thanks|ty|passt|super|top|perfekt|ok|okay|alles klar|verstanden|hallo|hi|hey|moin|servus|bye|tschuess|ciao|gute nacht|lol|haha|xd)\b/', $norm);
+    }
+
+    /**
+     * Baut aus dem Wissen eine sinngemaesse Antwort. null = keine gueltige Antwort gefunden.
+     *
+     * @return array{body:string,kid:?int,hitId:?int}|null
+     */
+    private function buildAnswer(string $question): ?array
+    {
+        // 1) gelernte Antwort des Teams (sehr aehnliche Frage), 2) freie Suche ueber alles Gelernte und alle Server-Infos
+        $hit = $this->knowledge->find($question, Env::float('MIN_CONFIDENCE', 0.55));
+        $context = $this->knowledge->searchMany($question, 4, 0.25);
+        if ($hit !== null) {
+            $context = array_values(array_filter($context, fn($c) => !($c['type'] === 'qa' && $c['id'] === $hit['id'])));
+            array_unshift($context, ['type' => 'qa', 'id' => $hit['id'], 'text' => $hit['answer'], 'channel' => '', 'score' => 1.0]);
+        }
+        if ($context === []) {
+            return null;
+        }
+        // nur antworten, wenn der Treffer sicher genug ist
+        if ($hit === null && (float) $context[0]['score'] < Env::float('SEARCH_MIN_SCORE', 0.6)) {
+            return null;
+        }
+        // und wenn die Antwort die Frage sinngemaess abdeckt
+        $body = Answer::compose($this->knowledge, $context, $question);
+        if ($body === null) {
+            return null;
+        }
+        return ['body' => $body, 'kid' => $hit['id'] ?? null, 'hitId' => $hit['id'] ?? null];
     }
 
     private function answerIfUnanswered(Message $m): void
@@ -443,44 +490,35 @@ final class Bot
             return; // Teamler hat inzwischen uebernommen
         }
 
-        $name = $m->author->username;
-        $sie = strtolower(Env::get('ADDRESS_FORM', 'du')) === 'sie';
-        $server = Env::get('SERVER_NAME', 'unser Server');
-
-        // 1) gelernte Antwort des Teams (sehr aehnliche Frage), 2) freie Suche ueber alles Gelernte und alle Server-Infos
-        $hit = $this->knowledge->find($q['text'], Env::float('MIN_CONFIDENCE', 0.55));
-        $context = $this->knowledge->searchMany($q['text'], 4, 0.25);
-        if ($hit !== null) {
-            $this->knowledge->markUsed($hit['id']);
-            $context = array_values(array_filter($context, fn($c) => !($c['type'] === 'qa' && $c['id'] === $hit['id'])));
-            array_unshift($context, ['type' => 'qa', 'id' => $hit['id'], 'text' => $hit['answer'], 'channel' => '', 'score' => 1.0]);
-        }
-        $kid = $hit['id'] ?? null;
-        $this->trace($m, "Wissen gefunden: " . count($context) . " Treffer" . ($context ? ", bester Wert " . round((float) $context[0]["score"], 2) : "") . ($hit ? " (gelernte Team-Antwort)" : ""));
-
-        // Nur antworten, wenn der Treffer sicher genug ist - sonst das Team markieren
-        $confident = $hit !== null || ($context !== [] && (float) $context[0]['score'] >= Env::float('SEARCH_MIN_SCORE', 0.6));
-        if (!$confident) {
-            $this->askTeam($m, $q, $name, $sie);
+        $plan = $this->buildAnswer($q['text']);
+        if ($plan === null) {
+            $this->askTeam($m, $q, $m->author->username, strtolower(Env::get('ADDRESS_FORM', 'du')) === 'sie');
             return;
         }
-
-        // Antwort aus den gefundenen Informationen bauen (regelbasiert, ohne KI-Modell) - nur die Antwort, ohne Quellenangabe
-        $this->sendAnswer($m, Answer::compose($this->knowledge, $context, $q['text'], $name, $sie, $server), $q['text'], $kid);
+        if ($plan['hitId'] !== null) {
+            $this->knowledge->markUsed($plan['hitId']);
+        }
+        $this->trace($m, 'sende Antwort');
+        // nur die Antwort, ohne Begruessung oder Quellenangabe
+        $this->sendAnswer($m, $plan['body'], $q['text'], $plan['kid']);
     }
 
-    /** Der Bot weiss nicht weiter: Team automatisch markieren. */
+    /** Der Bot weiss nicht weiter: Team sofort automatisch markieren (pro Person und Channel hoechstens alle 2 Minuten). */
     private function askTeam(Message $m, array $q, string $name, bool $sie): void
     {
-        if (!$this->settings->bool('FALLBACK_ENABLED', true) && empty($q['priority'])) {
+        $key = $m->author->id . '|' . $m->channel_id;
+        if (isset($this->teamPinged[$key]) && time() - $this->teamPinged[$key] < 120) {
+            $this->trace($m, 'Team wurde fuer diese Person bereits benachrichtigt');
             return;
         }
+        $this->teamPinged[$key] = time();
+
         $roles = Env::list('TEAM_PING_ROLE_IDS') ?: array_slice(Env::list('TEAM_ROLE_IDS'), 0, 1);
         $ping = $roles ? ' ' . implode(' ', array_map(fn($id) => "<@&{$id}>", $roles)) : '';
         $text = $sie
             ? "Hallo {$name}, dazu kann ich Ihnen leider keine sichere Antwort geben. Ich habe das Team benachrichtigt, es meldet sich bei Ihnen.{$ping}"
             : "Hallo {$name}, dazu kann ich dir leider keine sichere Antwort geben. Ich habe das Team benachrichtigt, es meldet sich bei dir.{$ping}";
-        $this->trace($m, 'kein sicherer Treffer - Team wird markiert' . ($ping === '' ? ' (TEAM_PING_ROLE_IDS/TEAM_ROLE_IDS nicht gesetzt)' : ''));
+        $this->trace($m, 'Team wird markiert' . ($ping === '' ? ' (TEAM_PING_ROLE_IDS/TEAM_ROLE_IDS nicht gesetzt)' : ''));
         // Frage merken: antwortet ein Teamler per Reply auf diese Nachricht, lernt der Bot daraus
         $this->sendAnswer($m, $text, $q['text'], null, true);
     }

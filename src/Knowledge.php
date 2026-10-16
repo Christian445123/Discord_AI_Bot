@@ -118,9 +118,10 @@ final class Knowledge
         }
         $pdo = $this->db->pdo();
         $docs = [];
-        foreach ($pdo->query('SELECT id, normalized, answer FROM knowledge WHERE score > -3') as $r) {
+        foreach ($pdo->query('SELECT id, normalized, answer, source FROM knowledge WHERE score > -3') as $r) {
             $docs[] = [
                 'type' => 'qa', 'id' => (int) $r['id'], 'text' => $r['answer'], 'channel' => '',
+                'boost' => $r['source'] === 'seed' ? 1.1 : 1.0, // Wissen von der Website hat Vorrang
                 'q' => array_flip(Text::tokens($r['normalized'])),
                 't' => array_flip(Text::tokens($r['normalized'] . ' ' . Text::normalize($r['answer']))),
             ];
@@ -128,6 +129,7 @@ final class Knowledge
         foreach ($pdo->query('SELECT id, content, channel_name, normalized FROM server_info') as $r) {
             $docs[] = [
                 'type' => 'info', 'id' => (int) $r['id'], 'text' => $r['content'], 'channel' => $r['channel_name'],
+                'boost' => str_starts_with((string) $r['channel_name'], 'Website') ? 1.1 : 1.0,
                 'q' => [], 't' => array_flip(Text::tokens($r['normalized'])),
             ];
         }
@@ -192,6 +194,7 @@ final class Knowledge
                 continue; // mindestens zwei uebereinstimmende Woerter (bei kurzen Fragen eines)
             }
             $score = max($matchedQ / $total, 0.9 * ($matched / $total));
+            $score = min(1.0, $score * ($d['boost'] ?? 1.0));
             if ($score >= $min) {
                 $hits[] = ['type' => $d['type'], 'id' => $d['id'], 'text' => $d['text'], 'channel' => $d['channel'], 'score' => $score];
             }
