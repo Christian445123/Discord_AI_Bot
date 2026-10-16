@@ -15,7 +15,7 @@ use App\Env;
 use Discord\Discord;
 use Discord\WebSockets\Intents;
 
-Dotenv\Dotenv::createImmutable(__DIR__)->safeLoad();
+App\Env::load(__DIR__);
 
 $db = new Database();
 $discord = new Discord([

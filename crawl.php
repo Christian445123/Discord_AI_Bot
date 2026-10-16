@@ -16,7 +16,7 @@ require __DIR__ . '/vendor/autoload.php';
 use App\Crawler;
 use App\Env;
 
-Dotenv\Dotenv::createImmutable(__DIR__)->safeLoad();
+App\Env::load(__DIR__);
 
 foreach (['DISCORD_TOKEN', 'DB_NAME', 'DB_USER'] as $required) {
     if (Env::get($required) === '') {

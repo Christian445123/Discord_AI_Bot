@@ -61,6 +61,9 @@ final class Bot
         $this->discord->on('init', function (Discord $discord) {
             echo "[Bot] Eingeloggt als {$discord->user->username}\n";
             $discord->on(Event::MESSAGE_CREATE, fn(Message $m) => $this->onMessage($m));
+            // Web-Panel als Kindprozess starten - so ist alles ein einziger pm2-Prozess
+            (new PanelServer($discord->getLoop()))->start();
+
             // Kategorien/Channels fuer das Panel (Ausschluss-Ansicht) aktuell halten
             $syncChannels = function () use ($discord): string {
                 try {

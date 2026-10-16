@@ -14,7 +14,7 @@ if (!is_file($root . '/vendor/autoload.php') || !is_file($root . '/.env')) {
     exit(1);
 }
 require $root . '/vendor/autoload.php';
-Dotenv\Dotenv::createImmutable($root)->safeLoad();
+App\Env::load($root);
 
 use App\Database;
 use App\Jobs;

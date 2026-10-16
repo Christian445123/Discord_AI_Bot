@@ -482,19 +482,7 @@ if (fnAvailable('exec')) {
 dbg('pm2 verfuegbar: ' . ($pm2 ? 'ja' : 'nein'));
 
 $panelPort = (int) $cfg['PANEL_PORT'];
-$panelCmd = escapeshellarg(PHP_BINARY) . ' -S 0.0.0.0:' . $panelPort . ' -t ' . escapeshellarg(__DIR__ . '/panel');
-if ($pm2) {
-    say("  pm2 gefunden - Bot und Web-Panel (Port {$panelPort}) werden am Ende dauerhaft ueber pm2 gestartet.");
-} elseif (askYesNo("Web-Panel jetzt im Hintergrund starten (http://localhost:{$panelPort})?", true)) {
-    if (isWindows()) {
-        pclose(popen('start /B "" ' . $panelCmd . ' > NUL 2>&1', 'r'));
-    } else {
-        exec('nohup ' . $panelCmd . ' > ' . escapeshellarg(__DIR__ . '/panel.log') . ' 2>&1 &');
-    }
-    ok("Web-Panel gestartet auf http://localhost:{$panelPort}" . (isWindows() ? '' : ' (Log: panel.log)'));
-} else {
-    say("  Panel spaeter starten mit: php -S 0.0.0.0:{$panelPort} -t panel");
-}
+say("  Das Web-Panel startet automatisch zusammen mit dem Bot (ein einziger Prozess) auf Port {$panelPort}.");
 say();
 
 if ($cfg['TEAM_ROLE_IDS'] !== '') {
@@ -515,7 +503,9 @@ if ($cfg['TEAM_ROLE_IDS'] !== '') {
 }
 
 if ($pm2) {
-    if (askYesNo('Bot und Panel jetzt dauerhaft mit pm2 starten?', true)) {
+    if (askYesNo('Bot (inkl. Web-Panel) jetzt dauerhaft mit pm2 starten?', true)) {
+        step('Entferne ein altes, separates Panel-Programm aus pm2 (falls vorhanden)');
+        run('pm2 delete discord-ai-panel');
         step('Starte Bot und Panel mit pm2 (ecosystem.config.js)');
         $code = run('pm2 startOrRestart ecosystem.config.js --update-env');
         if ($code !== 0) {

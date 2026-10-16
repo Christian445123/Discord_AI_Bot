@@ -81,7 +81,7 @@ function store(array $info): void
 {
     try {
         require_once __DIR__ . '/vendor/autoload.php';
-        Dotenv\Dotenv::createImmutable(__DIR__)->safeLoad();
+        App\Env::load(__DIR__);
         $db = new App\Database();
         $db->pdo()->prepare(
             'INSERT INTO bot_status (k, v, updated_at) VALUES (?,?,NOW()) ON DUPLICATE KEY UPDATE v = VALUES(v), updated_at = NOW()'

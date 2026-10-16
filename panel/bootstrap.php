@@ -13,7 +13,7 @@ if (!is_file($root . '/vendor/autoload.php') || !is_file($root . '/.env')) {
     exit('Bot ist noch nicht eingerichtet. Bitte zuerst "php install.php" ausfuehren.');
 }
 require $root . '/vendor/autoload.php';
-Dotenv\Dotenv::createImmutable($root)->safeLoad();
+App\Env::load($root);
 
 use App\Database;
 use App\Env;

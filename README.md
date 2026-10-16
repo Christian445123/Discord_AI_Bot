@@ -32,6 +32,9 @@ pm2 logs discord-ai-bot          # Live-Log
 ```
 
 `install.php` richtet das automatisch ein, wenn pm2 installiert ist. Der Bot startet bei Abstürzen selbst neu.
+Es gibt nur **einen** pm2-Prozess (`discord-ai-bot`): Er startet das Web-Panel selbst als Kindprozess (Port `PANEL_PORT`,
+Log `panel.log`) und startet es neu, falls es beendet wird. Mit `PANEL_EMBEDDED=false` lässt sich das abschalten.
+Ein früheres separates pm2-Programm `discord-ai-panel` bitte löschen: `pm2 delete discord-ai-panel`.
 Aufträge aus dem Panel (z.B. "Durchsuchung starten") werden vom laufenden Bot ausgeführt – der Bot muss also laufen.
 Nach Änderungen in den Einstellungen: `pm2 restart discord-ai-bot`.
 
