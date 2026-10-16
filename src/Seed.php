@@ -58,6 +58,32 @@ final class Seed
                 'ViennaStateRP ist ein Midcore-Roleplay-Server mit Fokus auf Realismus, mit Justizsystem (Staatsanwälte, Richter, Anwälte), Journalisten-Job und einem Smartphone mit Kontakten, Anrufen, SMS, Kamera, Browser und Social-Media-Feed.'],
             ['Wie kann ich das Projekt unterstützen und spenden?',
                 'Du kannst uns über https://ko-fi.com/viennastaterp unterstützen. Die Spenden halten den Server am Laufen.'],
+
+            // --- Regelwerk (https://viennastaterp.at/regelwerk.php, Stand 16.10.2026) ---
+            ['Was ist Powergaming und was passiert dabei?',
+                'Powergaming ist verboten und wird mit einem Kick geahndet. Das genaue Strafmaß legt das Team fest.'],
+            ['Was ist FailRP und welche Strafe gibt es?',
+                'FailRP wird mit einer Verwarnung oder einem Kick bestraft. Details stehen im Regelwerk (https://viennastaterp.at/regelwerk.php).'],
+            ['Wie funktioniert die OOC Kommunikation und darf ich im Roleplay OOC schreiben?',
+                'Roleplay geht vor. Der OOC-Chat ist nur für technische Probleme gedacht.'],
+            ['Was ist Cop-Baiting und ist das erlaubt?',
+                'Cop-Baiting, also das Provozieren der Polizei ohne Roleplay-Grund, ist untersagt.'],
+            ['Darf ich in mehreren Fraktionen sein und was gilt für Fraktionen?',
+                'Pro Charakter ist nur eine offizielle Fraktion erlaubt. Interne Informationen einer Fraktion bleiben intern.'],
+            ['Wie muss ich als Medic oder bei Verletzungen spielen und darf ich Verletzungen ignorieren?',
+                'Schwere Verletzungen dürfen nicht ignoriert werden. Sie müssen im Roleplay ausgespielt werden (Medic-RP).'],
+            ['Was passiert bei Cheating, Hacking, Bugs und Exploits?',
+                'Cheating, Hacking sowie das Ausnutzen von Bugs und Exploits oder Manipulation sind verboten und werden mit einem Bann geahndet.'],
+            ['Welche Regeln gelten für Respekt, Beleidigungen und das Verhalten in der Community?',
+                'Beleidigungen, Diskriminierung, Belästigung, Drohungen und Doxing sind verboten. Hassrede führt zu einem Bann. Respektiere andere Spieler und das Team.'],
+            ['Was ist beim Thema NSFW und unangemessenem Roleplay erlaubt?',
+                'NSFW-Roleplay ist nur mit dem Einverständnis aller Beteiligten erlaubt. Sexualisiertes Roleplay mit Minderjährigen ist strikt untersagt. Verstöße gegen die NSFW-Regeln werden mit einem Bann geahndet.'],
+            ['Welche Strafen und Sanktionen gibt es bei Regelverstößen?',
+                'Möglich sind Verwarnungen, Kicks, Bans auf dem Server, Discord-Ausschlüsse und Account-Sperren. Das Strafmaß legt das Team fest, Entscheidungen sind final. Einsprüche laufen über ein Support-Ticket auf Discord.'],
+            ['Darf ich mit echtem Geld handeln oder Ingame-Items verkaufen?',
+                'Der Handel mit echtem Geld (Real-Money-Trading) ist verboten und führt zu einem Bann.'],
+            ['Wo werden Regeländerungen bekannt gegeben?',
+                'Änderungen am Regelwerk werden auf unserem Discord bekannt gegeben. Es gilt immer der aktuelle Stand unter https://viennastaterp.at/regelwerk.php.'],
         ];
     }
 

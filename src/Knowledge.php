@@ -130,6 +130,7 @@ final class Knowledge
             $docs[] = [
                 'type' => 'info', 'id' => (int) $r['id'], 'text' => $r['content'], 'channel' => $r['channel_name'],
                 'boost' => str_starts_with((string) $r['channel_name'], 'Website') ? 1.1 : 1.0,
+                'rules' => stripos((string) $r['channel_name'], 'regelwerk') !== false,
                 'q' => [], 't' => array_flip(Text::tokens($r['normalized'])),
             ];
         }
@@ -176,6 +177,11 @@ final class Knowledge
             $total += $idf[$t];
         }
 
+        // Regelfragen (erlaubt, verboten, Strafe, RDM ...): Abschnitte aus dem Regelwerk bevorzugen
+        $ruleQuestion = (bool) preg_match(
+            '/\b(regel\w*|erlaubt\w*|verbot\w*|duerf\w*|darf|strafe\w*|bann\w*|gebannt|kick\w*|verwarn\w*|sanktion\w*|rdm|vdm|metagaming|powergaming|failrp|combat\w*|safezone|cop ?baiting|new life|nlr|ueberfall\w*|raub\w*|exploit\w*|cheat\w*|hack\w*|nsfw|ooc)\b/',
+            Text::normalize($question)
+        );
         $hits = [];
         foreach ($this->corpus as $d) {
             $matched = 0.0;
@@ -195,6 +201,9 @@ final class Knowledge
             }
             $score = max($matchedQ / $total, 0.9 * ($matched / $total));
             $score = min(1.0, $score * ($d['boost'] ?? 1.0));
+            if ($ruleQuestion && !empty($d['rules'])) {
+                $score = min(1.0, $score * 1.15);
+            }
             if ($score >= $min) {
                 $hits[] = ['type' => $d['type'], 'id' => $d['id'], 'text' => $d['text'], 'channel' => $d['channel'], 'score' => $score];
             }
